@@ -16,7 +16,8 @@ export const MODULES = {
   core: { deps: [], importsCore: false },
 
   // Command-line interface. Talks to users via the terminal.
-  cli: { deps: [], importsCore: true },
+  // commander is extra-typings' peer: we import only the typed wrapper.
+  cli: { deps: ["@commander-js/extra-typings", "commander"], importsCore: true },
 
   // HTTP service. Talks to users via HTTP.
   server: { deps: [], importsCore: true },

@@ -77,6 +77,15 @@ Skip step 2 and lint fails in that module and `check:deps` reports it.
 | Expected failures throw `VdError` with a stable `code` (`INPUT_NOT_FOUND`, `OUTPUT_EXISTS`, `FFMPEG_FAILED`...) plus the stderr tail. | The CLI maps codes to exit codes, the server to HTTP statuses. |
 | The process runner is injectable (`runner`). | Unit tests can use a fake without FFmpeg installed. |
 
+## The CLI
+
+`run(argv, ctx)` in `cli/index.ts` builds a commander program per call, with
+`exitOverride` and output routed to `ctx.stdout`/`ctx.stderr`, so it never
+exits the process and tests can capture what it prints. `main.ts` supplies
+argv, env (`FFMPEG_PATH`, `FFPROBE_PATH`), the package version and the
+Ctrl+C AbortSignal. Arguments after `--` are split off before parsing and go
+to FFmpeg untouched. Exit codes: 0 ok, 1 failure, 2 usage, 130 cancelled.
+
 ## Tests
 
 `node:test` + `node:assert/strict`, run by `tsx --conditions=source --test`.

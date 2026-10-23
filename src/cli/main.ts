@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // Composition root for the CLI: the only file that reads the real process
 // (argv, env vars, signals) and turns it into plain arguments for run().
+import { readFileSync } from "node:fs";
 import { EXIT, run } from "./index.js";
+
+// Same relative path from src/cli/main.ts and dist/cli/main.js.
+const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
 
 const controller = new AbortController();
 let abortedAt = 0;
@@ -27,6 +31,7 @@ process.on("exit", () => controller.abort());
 
 process.exitCode = await run(process.argv.slice(2), {
   signal: controller.signal,
+  version,
   ffmpegPath: process.env.FFMPEG_PATH,
   ffprobePath: process.env.FFPROBE_PATH,
 });

@@ -55,5 +55,7 @@ npm run build               # tsc → dist/
   it, FFmpeg keeps running: always abort the signal on exit.
 - FFmpeg 6+ ignores `-metadata:s:v rotate=90`. To make a rotated test clip use
   `ffmpeg -display_rotation 90 -i in.mp4 -c copy out.mp4`.
+- Windows PowerShell 5.1 splits `-c:v` into `-c:` `v` when calling native
+  programs. Quote FFmpeg options with a colon: `-- '-c:v' libx264`.
 - Generate test media with lavfi instead of committing binaries, e.g.
   `ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30 -f lavfi -i sine=frequency=440 -t 5 -c:v libx264 -preset ultrafast -c:a aac -shortest src.mp4`

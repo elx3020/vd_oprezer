@@ -8,8 +8,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 1 | Project shape & language | ✅ done | Single package, TypeScript, Node 24, ESM, npm; boundary guardrails |
 | 2 | How core runs FFmpeg | ✅ done | `node:child_process` spawn, no runtime deps |
 | 3 | Testing | ✅ done | `node:test` via tsx, no new deps |
-| 4 | **CLI framework** | ⏭ next, recommendation ready | — |
-| 5 | Presets & validation | open | — |
+| 4 | CLI framework | ✅ done | commander 15 + `@commander-js/extra-typings` |
+| 5 | **Presets & validation** | ⏭ next | — |
 | 6 | HTTP server & uploads | open | — |
 | 7 | Job queue | open | — |
 | 8 | Progress reporting to HTTP clients | open | — |
@@ -34,8 +34,9 @@ with `versions`, `probe`, `transcode`; progress via `-progress pipe:1`;
 cancellation via AbortSignal (instant SIGKILL); temp-file + rename output;
 `VdError` codes; injectable `runner`.
 
-The behaviours below were verified by hand; all but the last are now covered
-by `src/core/engine.integration.test.ts` (decision 3):
+The behaviours below were verified by hand. They are now covered by
+`src/core/engine.integration.test.ts`, and the last one by `src/cli/main.test.ts`
+(decisions 3 and 4):
 
 - probe: 1080p30 h264/aac file → correct duration, size, codecs, fps, channels
 - probe: clip with display rotation 90 → `rotation: 90`
@@ -70,28 +71,42 @@ files. Reasons to switch: coverage thresholds in CI, or a slow watch loop.
 - ESLint: `no-floating-promises` allows node:test's `describe`/`it`.
 - Not covered yet: "no ffmpeg process left" is implied (the runner settles
   only after the process's `close` event), not checked against the OS
-  process list. The CLI Ctrl+C test comes with the CLI end-to-end tests,
-  after decision 4 replaces the temporary CLI. HTTP tests come with decision 6.
+  process list. HTTP tests come with decision 6.
 
-## 4. CLI framework — recommendation ready
+## 4. CLI framework ✅
 
-Target shape:
+**commander 15 + @commander-js/extra-typings**: no transitive deps, the
+de-facto standard, with subcommands, variadic args, generated help and typed
+options. Alternatives considered: `util.parseArgs` (no subcommands or help),
+yargs (overlaps with zod, weaker types), citty/clipanion (less familiar).
+commander is listed for `cli` as extra-typings' peer; code imports only
+`@commander-js/extra-typings`.
+
+Implemented now (presets and their flags wait for decision 5):
 
 ```
-vd-oprezer convert <inputs...> [-p web] [-o out.mp4 | --out-dir dir] [--crf 23] [--max-height 720] [--overwrite] [-- extra ffmpeg args]
+vd-oprezer convert <inputs...> (-o out.mp4 | --out-dir dir) [--overwrite] [-- ffmpeg args]
 vd-oprezer probe <input> [--json]
-vd-oprezer presets [name]
-vd-oprezer version
+vd-oprezer version          # also -V/--version, -h/--help
 ```
 
-Recommended: **commander + @commander-js/extra-typings**. It has zero deps,
-it's the de-facto standard, it supports subcommands, variadic args, `--`
-passthrough and generated help, and it infers option types. Validation stays
-in zod (decision 5), shared with the HTTP API.
-Alternatives considered: `util.parseArgs` (no subcommands or help), yargs
-(overlaps with zod, weaker types), citty/clipanion (less familiar).
-Keep our own progress line; prompts (`@inquirer/prompts`) maybe later.
-Replaces the temporary hand-rolled CLI in `src/cli/index.ts`.
+- `run(argv, ctx)` stays side-effect free: commander's `exitOverride` throws
+  instead of exiting, and output goes to `ctx.stdout`/`ctx.stderr`, so tests
+  capture it. Exit codes: 0 ok, 1 a file failed, 2 usage, 130 cancelled.
+- Arguments after the first `--` are split off before commander parses, so
+  they reach FFmpeg as-is instead of becoming more inputs.
+- Several inputs run one after another. A failed file is reported and the
+  batch continues (exit 1). Cancelling stops the batch.
+- `--output`/`--out-dir` is required for now. `--out-dir` keeps each input's
+  file name. Default naming and the output container come with presets.
+- Progress line only when stderr is a TTY. `main.ts` reads the version from
+  `package.json`, so the Docker image must include that file.
+- Tests: `cli/index.test.ts` (fake runner, captured output) and
+  `cli/main.test.ts` (spawns `main.ts` from source). The Ctrl+C test sends
+  SIGINT to the process group and checks exit 130, no files left and no
+  FFmpeg left. Windows can't send SIGINT to a child process, so it skips
+  there. It hasn't run yet; it will run in Docker/CI (decisions 9 and 10).
+- Later, if wanted: `@inquirer/prompts` for interactive prompts.
 
 ## 5–10
 
