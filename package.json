@@ -1,0 +1,39 @@
+{
+  "name": "vd_oprezer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Video optimizer & resizer: a CLI and HTTP service around FFmpeg, with presets for web, YouTube, Instagram and more.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "vd-oprezer": "./dist/cli/main.js"
+  },
+  "imports": {
+    "#core": {
+      "source": "./src/core/index.ts",
+      "default": "./dist/core/index.js"
+    }
+  },
+  "scripts": {
+    "dev:cli": "tsx --conditions=source src/cli/main.ts",
+    "dev:server": "tsx watch --conditions=source src/server/main.ts",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "start:cli": "node dist/cli/main.js",
+    "start:server": "node dist/server/main.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check:deps": "node scripts/check-deps.js",
+    "check": "npm run typecheck && npm run lint && npm run check:deps"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}
