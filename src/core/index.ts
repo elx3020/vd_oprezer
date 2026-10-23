@@ -1,13 +1,16 @@
 // Public API of core. cli and server import ONLY what is exported here,
 // through the "#core" alias. Anything not exported is private to core.
-//
-// Placeholder until decision 2 (how we run FFmpeg) adds the real API.
 
-export interface CoreInfo {
-  name: string;
-  ready: boolean;
-}
-
-export function coreInfo(): CoreInfo {
-  return { name: "vd_oprezer core", ready: false };
-}
+export {
+  createEngine,
+  type CallOptions,
+  type Engine,
+  type EngineConfig,
+  type EngineVersions,
+  type TranscodeOptions,
+  type TranscodeResult,
+} from "./engine.js";
+export { VdError, isVdError, type VdErrorCode, type VdErrorDetails } from "./errors.js";
+export { parseProbeOutput, type AudioStreamInfo, type MediaInfo, type VideoStreamInfo } from "./probe.js";
+export { createProgressParser, type Progress } from "./progress.js";
+export { spawnRunner, type RunOptions, type RunResult, type Runner } from "./runner.js";

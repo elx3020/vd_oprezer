@@ -4,19 +4,21 @@
 bitrate and size with presets (web, YouTube, Instagram, ...). It ships as a
 CLI, an HTTP service, and a Docker image containing both.
 
-> Status: foundation only. The FFmpeg engine, CLI commands, presets and HTTP API
-> come next, one decision at a time.
+> Status: the FFmpeg engine (probe, transcode, progress, cancel) works. The CLI
+> is a temporary minimal version; the real CLI, presets and the HTTP API come
+> next, one decision at a time.
 
 ## Requirements
 
 - Node.js 24+
-- FFmpeg + ffprobe on `PATH` (needed once the engine lands; the Docker image will include them)
+- FFmpeg + ffprobe on `PATH`, or set `FFMPEG_PATH` / `FFPROBE_PATH` (the Docker image will include them)
 
 ## Quick start
 
 ```bash
 npm install
-npm run dev:cli -- input.mp4 --preset web   # run the CLI from source
+npm run dev:cli -- probe input.mp4          # run the CLI from source
+npm run dev:cli -- convert in.mov out.mp4 -- -vf scale=-2:720 -c:v libx264 -crf 26 -c:a aac -b:a 128k
 npm run dev:server                          # run the server from source (watch mode)
 npm run check                               # typecheck + lint + module boundary checks
 npm run build                               # compile to dist/

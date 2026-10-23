@@ -61,6 +61,25 @@ Skip step 2 and lint fails in that module and `check:deps` reports it.
   resolve to the TypeScript source, so there's no build step while developing.
 - **Runtime** (`node dist/...`) resolves to the compiled JS.
 
+## The engine (core)
+
+`createEngine({ ffmpegPath?, ffprobePath?, runner? })` returns
+`{ versions, probe, transcode }`. FFmpeg runs through Node's built-in
+`child_process.spawn`, so core has no runtime dependencies.
+
+| Behaviour | Why |
+|---|---|
+| Progress comes from `-progress pipe:1` (key=value lines); percent = `out_time / duration` (duration from ffprobe). | Machine-readable output, no parsing of human-oriented log text. |
+| Cancel with an `AbortSignal`; time out with `AbortSignal.timeout(ms)`. A cancelled job rejects with `signal.reason`. | One mechanism for Ctrl+C, HTTP client disconnects and timeouts. |
+| On abort FFmpeg is killed at once (SIGKILL), and the promise settles only after it has exited. | The output is discarded anyway; the file is closed before we delete it (Windows). |
+| FFmpeg writes to `.<name>.<id>.partial.<ext>` next to the output, which is renamed into place on success and deleted on failure. | No half-written files under the real name, and an existing output stays intact until the new one is complete. |
+| Inputs must be local files. | FFmpeg also accepts URLs and other protocols; the server must never let a client make it fetch arbitrary URLs. |
+| Expected failures throw `VdError` with a stable `code` (`INPUT_NOT_FOUND`, `OUTPUT_EXISTS`, `FFMPEG_FAILED`...) plus the stderr tail. | The CLI maps codes to exit codes, the server to HTTP statuses. |
+| The process runner is injectable (`runner`). | Unit tests can use a fake without FFmpeg installed. |
+
+cli/server `main.ts` wire process signals to the AbortSignal and abort on
+`exit` too, so FFmpeg never keeps running as an orphan.
+
 ## Splitting into separate packages (when needed)
 
 1. Move `src/<name>/` → `packages/<name>/src/` for each module.
