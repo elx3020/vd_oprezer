@@ -381,3 +381,88 @@ describe("jobs", () => {
     assert.deepEqual(await readdir(workDir), []);
   });
 });
+
+/** Opens a job's event stream; yields its events (keep-alive comments skipped) until the server ends it. */
+async function* events(id: string): AsyncGenerator<{ event: string; job: Job }> {
+  const res = await fetch(`${base}/jobs/${id}/events`);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of res.body!) {
+    buffer += decoder.decode(chunk, { stream: true });
+    for (let end = buffer.indexOf("\n\n"); end !== -1; end = buffer.indexOf("\n\n")) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      if (block.startsWith(":")) continue;
+      yield { event: /^event: (.*)$/m.exec(block)?.[1] ?? "", job: JSON.parse(/^data: (.*)$/m.exec(block)?.[1] ?? "null") as Job };
+    }
+  }
+}
+
+describe("GET /jobs/:id/events", () => {
+  it("sends the job now and on every change, then ends when it's done", async () => {
+    const { runner, encodes } = blockingRunner();
+    await start({ runner });
+    await submit(form({}));
+    const { id } = (await (await submit(form({}))).json()) as Job;
+    await until(() => encodes.length === 1);
+
+    const seen: [string, Job["status"], number][] = [];
+    for await (const { event, job } of events(id)) {
+      seen.push([event, job.status, job.progress]);
+      if (seen.length === 1) encodes[0]?.release(); // first job ends, ours starts
+      if (job.progress === 50) encodes[1]?.release();
+    }
+    assert.deepEqual(seen, [
+      ["job", "queued", 0],
+      ["job", "running", 0],
+      ["job", "running", 50],
+      ["job", "done", 100],
+    ]);
+    assert.ok((await getJob(id)).finishedAt);
+  });
+
+  it("sends one event and ends at once for a finished job", async () => {
+    await start({ runner: () => Promise.resolve(result(1, "", "Invalid data found when processing input")) });
+    const { id } = (await (await submit(form({}))).json()) as Job;
+    await waitForStatus(id, "failed");
+    const all = [];
+    for await (const e of events(id)) all.push(e);
+    assert.equal(all.length, 1);
+    assert.deepEqual([all[0]?.job.status, all[0]?.job.error?.code], ["failed", "PROBE_FAILED"]);
+  });
+
+  it("sends 'deleted' and ends when the job is deleted while watched", async () => {
+    const { runner, encodes } = blockingRunner();
+    await start({ runner });
+    const { id } = (await (await submit(form({}))).json()) as Job;
+    await until(() => encodes.length === 1);
+
+    const seen: string[] = [];
+    for await (const { event } of events(id)) {
+      seen.push(event);
+      if (seen.length === 1) await fetch(`${base}/jobs/${id}`, { method: "DELETE" });
+    }
+    assert.deepEqual(seen, ["job", "deleted"]);
+  });
+
+  it("answers 404 for unknown jobs, which also stops EventSource from reconnecting", async () => {
+    await start();
+    const res = await fetch(`${base}/jobs/nope/events`);
+    assert.equal(res.status, 404);
+    assert.equal(((await res.json()) as { error: string }).error, "NOT_FOUND");
+  });
+
+  it("ends open streams on shutdown instead of keeping the server alive", async () => {
+    const { runner, encodes } = blockingRunner();
+    await start({ runner });
+    const { id } = (await (await submit(form({}))).json()) as Job;
+    await until(() => encodes.length === 1);
+
+    const stream = events(id);
+    const first = await stream.next();
+    assert.equal(first.done ? undefined : first.value.job.status, "running");
+    await close();
+    assert.equal((await stream.next()).done, true);
+  });
+});

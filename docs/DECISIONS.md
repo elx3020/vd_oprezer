@@ -12,8 +12,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 5 | Presets & validation | ✅ done | Presets as typed data in core; zod 4 schema shared by CLI and HTTP |
 | 6 | HTTP server & uploads | ✅ done | Fastify 5 + `@fastify/multipart`, uploads streamed to disk |
 | 7 | Job queue | ✅ done | In memory, own FIFO limiter, no deps; shaped for persistence later |
-| 8 | **Progress reporting to HTTP clients** | ⏭ next | — |
-| 9 | Docker image | open | — |
+| 8 | Progress reporting to HTTP clients | ✅ done | Server-Sent Events, no deps; polling still works |
+| 9 | **Docker image** | ⏭ next | — |
 | 10 | CI | open | — |
 
 ---
@@ -232,9 +232,42 @@ BullMQ or similar, which is a bigger step.
   running, expiry, 404s, wipe at start and close) and a real-FFmpeg job in
   `index.integration.test.ts`.
 
-## 8–10
+## 8. Progress reporting to HTTP clients ✅
+
+**Server-Sent Events, written ourselves** (about 30 lines, no dependency):
+`GET /jobs/:id/events`. Chosen over polling only (still works, but updates
+come only as often as clients ask), WebSocket (two-way isn't needed; a
+dependency plus a protocol upgrade proxies must allow) and webhooks (the
+server would call client-chosen URLs: an SSRF risk that breaks the "never
+fetch arbitrary URLs" rule; worth it later, with an allowlist, if a
+backend client needs it).
+
+```
+event: job
+data: {"id":"…","status":"running","progress":42,…}     ← the full Job, same as GET /jobs/:id
+```
+
+- The full job is sent on connect, then again on every status change and
+  every whole-percent step. The stream ends after `done`/`failed`, or with
+  `event: deleted` when the job is deleted or expires.
+- A `: keep-alive` comment every 15 s keeps proxies from closing quiet
+  streams. `X-Accel-Buffering: no` keeps nginx from buffering.
+- Browser clients: `EventSource` reconnects whenever a stream ends, so call
+  `close()` on `done`/`failed`. Unknown or expired jobs answer 404, which
+  stops reconnecting for good.
+- Shutdown ends all streams: the abort moved to Fastify's `preClose` hook,
+  since `close()` waits for open requests first (verified: with the abort
+  in `onClose`, close hangs).
+- Bug found by watching a real encode: FFmpeg sometimes reports
+  `out_time` as N/A while flushing near the end, and the parser turned that
+  into 0 %, so progress went 98 → 0 → 100. The parser now keeps the last
+  known time (`core/progress.ts`, with a test).
+- Tests: 5 SSE tests in `server/index.test.ts` (live sequence queued →
+  running → 50 % → done, finished job, deleted while watched, 404,
+  shutdown ends streams).
+
+## 9–10
 
 Initial thoughts from the first discussion, to be confirmed:
-- 8 Progress to clients: Server-Sent Events.
 - 9 Docker: `node:24-slim` + FFmpeg (maybe a static build for newer encoders);
   one image, `convert`/`serve` entrypoints.

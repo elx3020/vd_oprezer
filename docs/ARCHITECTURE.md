@@ -116,6 +116,10 @@ output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
 `MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
 `FFMPEG_PATH`, `FFPROBE_PATH`) and handles SIGINT/SIGTERM.
 
+`GET /jobs/:id/events` streams job changes as Server-Sent Events:
+`jobs.subscribe(id, listener)` reports each change. The stream ends when
+the job finishes or is deleted, or when shutdown starts (`preClose`).
+
 Jobs don't survive restarts yet; `docs/DECISIONS.md` (decision 7) describes
 the path to add that without changing the API.
 

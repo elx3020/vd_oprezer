@@ -68,6 +68,17 @@ progress=continue`,
     assert.equal(p?.bitrateKbps, undefined);
   });
 
+  it("keeps the last known time when a later block has none (seen near the end of real encodes)", () => {
+    const reports = parse(10_000, "out_time_us=9600000\nprogress=continue\nout_time_us=N/A\nframe=465\nprogress=continue");
+    assert.deepEqual(
+      reports.map((p) => [p.outTimeMs, p.percent]),
+      [
+        [9_600, 96],
+        [9_600, 96],
+      ],
+    );
+  });
+
   it("clamps percent to 100 when output runs past the probed duration", () => {
     const [p] = parse(10_000, "out_time_us=10500000\nprogress=continue");
     assert.equal(p?.percent, 100);

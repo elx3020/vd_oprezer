@@ -50,8 +50,9 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     await mkdir(path.join(root, "jobs"), { recursive: true });
     await mkdir(path.join(root, "convert"), { recursive: true });
   });
+  // preClose runs before Fastify waits for open requests, so event streams end and encodes stop first.
+  app.addHook("preClose", () => stopped.abort());
   app.addHook("onClose", async () => {
-    stopped.abort();
     await jobs.settled();
     await rm(root, { recursive: true, force: true });
   });
@@ -159,6 +160,47 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     const job = findJob(req.params.id);
     if (job.status !== "done") throw new HttpError(409, "NOT_READY", `The job is ${job.status}.`);
     return sendFile(reply, jobs.paths(job.id).output, job.filename);
+  });
+
+  // Server-Sent Events: the job now, then again on every change (status, whole
+  // percent). The stream ends when the job is done, failed or deleted.
+  // EventSource reconnects whenever a stream ends, so browser clients should
+  // close() it on done/failed; once a job expires, reconnects get 404 and stop.
+  app.get<{ Params: { id: string } }>("/jobs/:id/events", (req, reply) => {
+    const job = findJob(req.params.id);
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      // Tells nginx not to buffer the stream.
+      "x-accel-buffering": "no",
+    });
+    const event = (name: string, data: unknown) => res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+    const finished = (j: Job) => j.status === "done" || j.status === "failed";
+
+    let unsubscribe = () => {};
+    // A comment line keeps proxies from closing a quiet connection.
+    const keepAlive = setInterval(() => res.write(": keep-alive\n\n"), 15_000);
+    const end = () => {
+      clearInterval(keepAlive);
+      unsubscribe();
+      signal.removeEventListener("abort", end);
+      if (!res.writableEnded) res.end();
+    };
+
+    event("job", job);
+    if (finished(job)) return end();
+    unsubscribe = jobs.subscribe(job.id, (changed) => {
+      if (!changed) {
+        event("deleted", { id: job.id });
+        return end();
+      }
+      event("job", changed);
+      if (finished(changed)) end();
+    });
+    res.once("close", end);
+    signal.addEventListener("abort", end, { once: true });
   });
 
   app.delete<{ Params: { id: string } }>("/jobs/:id", async (req, reply) => {

@@ -42,12 +42,16 @@ export interface JobsConfig {
 
 export type Jobs = ReturnType<typeof createJobs>;
 
+/** Called with the job after each change, or undefined once it's deleted. */
+export type JobListener = (job: Job | undefined) => void;
+
 interface Entry {
   job: Job;
   controller: AbortController;
   /** Settles once the job has stopped, i.e. FFmpeg has exited. */
   done: Promise<void>;
   expiry?: NodeJS.Timeout;
+  listeners: Set<JobListener>;
 }
 
 export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsConfig) {
@@ -67,6 +71,8 @@ export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsCon
     entries.delete(id);
     clearTimeout(entry.expiry);
     entry.controller.abort();
+    for (const listener of entry.listeners) listener(undefined);
+    entry.listeners.clear();
     // Wait for FFmpeg to exit: Windows can't delete files it still has open.
     await entry.done;
     await rm(paths(id).dir, { recursive: true, force: true });
@@ -79,22 +85,30 @@ export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsCon
     const controller = new AbortController();
     const jobSignal = AbortSignal.any([signal, controller.signal]);
     const { upload, output } = paths(job.id);
+    const entry: Entry = { job, controller, done: Promise.resolve(), listeners: new Set() };
+    const changed = () => {
+      for (const listener of entry.listeners) listener(job);
+    };
 
     const encode = async () => {
       job.status = "running";
+      changed();
       const res = await engine.transcode({
         input: upload,
         output,
         args: (info) => buildArgs(job.options, info),
         signal: jobSignal,
         onProgress: (p) => {
-          if (p.percent !== undefined) job.progress = Math.floor(p.percent);
+          // FFmpeg reports about twice a second; listeners only hear whole-percent steps.
+          const progress = p.percent === undefined ? job.progress : Math.floor(p.percent);
+          if (progress === job.progress) return;
+          job.progress = progress;
+          changed();
         },
       });
       Object.assign(job, { status: "done", progress: 100, sizeBytes: res.sizeBytes });
     };
 
-    const entry: Entry = { job, controller, done: Promise.resolve() };
     entry.done = limiter
       .run(encode, jobSignal)
       .catch((error: unknown) => {
@@ -106,6 +120,7 @@ export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsCon
       .then(async () => {
         if (jobSignal.aborted) return;
         job.finishedAt = new Date().toISOString();
+        changed();
         entry.expiry = setTimeout(() => void remove(job.id), ttlMs).unref();
         await rm(upload, { force: true });
       })
@@ -117,6 +132,12 @@ export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsCon
 
   return {
     get: (id: string): Job | undefined => entries.get(id)?.job,
+    /** Calls `listener` on every change of a known job; returns the unsubscribe function. */
+    subscribe(id: string, listener: JobListener): () => void {
+      const listeners = entries.get(id)?.listeners;
+      listeners?.add(listener);
+      return () => listeners?.delete(listener);
+    },
     paths,
     submit,
     remove,

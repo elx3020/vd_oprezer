@@ -36,6 +36,9 @@ export function createProgressParser(
   onProgress: (progress: Progress) => void,
 ): (line: string) => void {
   let block = new Map<string, string>();
+  // FFmpeg sometimes reports out_time as N/A (before the first frame, and
+  // while flushing near the end); keep the last known value then.
+  let lastOutTimeUs = 0;
 
   return (line) => {
     const eq = line.indexOf("=");
@@ -46,8 +49,8 @@ export function createProgressParser(
     if (key !== "progress") return;
 
     const done = value === "end";
-    const outTimeUs = num(block.get("out_time_us")) ?? num(block.get("out_time_ms"));
-    const outTimeMs = outTimeUs === undefined ? 0 : Math.max(0, Math.round(outTimeUs / 1000));
+    lastOutTimeUs = num(block.get("out_time_us")) ?? num(block.get("out_time_ms")) ?? lastOutTimeUs;
+    const outTimeMs = Math.max(0, Math.round(lastOutTimeUs / 1000));
     const speed = num(block.get("speed")?.replace(/x$/, ""));
     const hasDuration = durationMs !== undefined && durationMs > 0;
 
