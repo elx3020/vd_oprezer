@@ -11,8 +11,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 4 | CLI framework | ✅ done | commander 15 + `@commander-js/extra-typings` |
 | 5 | Presets & validation | ✅ done | Presets as typed data in core; zod 4 schema shared by CLI and HTTP |
 | 6 | HTTP server & uploads | ✅ done | Fastify 5 + `@fastify/multipart`, uploads streamed to disk |
-| 7 | **Job queue** | ⏭ next | — |
-| 8 | Progress reporting to HTTP clients | open | — |
+| 7 | Job queue | ✅ done | In memory, own FIFO limiter, no deps; shaped for persistence later |
+| 8 | **Progress reporting to HTTP clients** | ⏭ next | — |
 | 9 | Docker image | open | — |
 | 10 | CI | open | — |
 
@@ -179,14 +179,62 @@ POST /convert   multipart: "file" + preset/crf/maxSize fields, in any order → 
   limits, field order, sanitising, error mapping, disconnect, shutdown),
   `index.integration.test.ts` (real FFmpeg upload → 720p30 silent MP4) and
   `main.test.ts` (spawns `main.ts`; SIGTERM part skipped on Windows).
-- Still synchronous: every request encodes at once and the client waits.
-  Jobs and a concurrency limit are decision 7.
+- Decision 7 added jobs and a concurrency limit; `/convert` now waits for
+  a slot in the same queue.
 
-## 7–10
+## 7. Job queue ✅
+
+**In memory, with our own limiter** (`server/queue.ts`, about 40 lines): at
+most `concurrency` encodes at once, FIFO order, and a waiting task leaves the
+queue when its AbortSignal aborts. Chosen over p-queue (it would save about
+15 lines; we don't need priorities, timeouts or events), BullMQ + Redis (a
+second service plus shared storage, against the "one image" goal) and
+SQLite via `node:sqlite` (experimental, and running encodes restart
+anyway).
+
+```
+POST   /jobs              multipart, same fields as /convert → 202 Job, Location: /jobs/:id
+GET    /jobs/:id          Job: status queued|running|done|failed, progress 0–100, error?, sizeBytes?
+GET    /jobs/:id/output   the MP4 once done (409 NOT_READY before)
+DELETE /jobs/:id          cancel (kills FFmpeg) and delete files → 204
+```
+
+- Settings: `CONCURRENCY` (1, since x264 already uses every core),
+  `MAX_QUEUED` (20 waiting encodes, jobs and `/convert` together; more get
+  503 `QUEUE_FULL` before the upload is read), `JOB_TTL_MIN` (60: finished
+  jobs and outputs are deleted after this, downloaded or not).
+- Job ids are random UUIDs, so job URLs can't be guessed (there is no auth).
+  Paths are only built from ids of known jobs.
+- Files: `WORK_DIR/vd-oprezer/jobs/<id>/upload`, deleted when the encode
+  ends, then `output.mp4`. `/convert` uses `WORK_DIR/vd-oprezer/convert/`.
+  The whole `vd-oprezer` folder is wiped at startup and on close, so it's
+  one server per `WORK_DIR`.
+- A failed job keeps a safe `error { code, message }` (same mapping as HTTP
+  errors, `server/errors.ts`); 5xx causes are logged with the job id.
+- Not handled yet: uploads still in progress don't count toward
+  `MAX_QUEUED`, so a burst can go over it by the number of concurrent uploads.
+
+**Adding restart persistence later.** It was a requirement to leave room for this:
+- `Job` is plain JSON-serialisable data, and it's what a store would save.
+- Job files already sit at fixed paths derived from the id.
+- All job state changes happen in `server/jobs.ts`.
+
+To add it: save the `Job` on each change (a JSON file per job dir, or
+`node:sqlite`), and in the `onReady` hook in `server/index.ts` reload saved
+jobs instead of wiping the folder: re-queue `queued`/`running` ones, keep
+`done`/`failed` ones and restart their expiry timers. Clients and the HTTP
+API don't change. Several workers would also need shared storage plus
+BullMQ or similar, which is a bigger step.
+
+- Tests: `server/queue.test.ts` (limit, FIFO, abort while waiting, failures
+  free the slot), jobs in `server/index.test.ts` (lifecycle, one-at-a-time
+  with progress, queue full, failed job, invalid options, DELETE while
+  running, expiry, 404s, wipe at start and close) and a real-FFmpeg job in
+  `index.integration.test.ts`.
+
+## 8–10
 
 Initial thoughts from the first discussion, to be confirmed:
-- 7 Queue: `p-queue` in-process to start; BullMQ + Redis only if we need
-  multiple workers or persistence.
 - 8 Progress to clients: Server-Sent Events.
 - 9 Docker: `node:24-slim` + FFmpeg (maybe a static build for newer encoders);
   one image, `convert`/`serve` entrypoints.

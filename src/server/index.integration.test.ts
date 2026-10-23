@@ -8,7 +8,7 @@ import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { createEngine } from "#core";
-import { createApp } from "./index.js";
+import { createApp, type Job } from "./index.js";
 
 const exec = promisify(execFile);
 const engine = createEngine();
@@ -50,8 +50,33 @@ describe("POST /convert with real FFmpeg", { skip: !available && "ffmpeg/ffprobe
     } finally {
       await server.close();
     }
-    // Cleanup runs when the response closes, just after the client got it.
-    for (let i = 0; i < 50 && (await readdir(workDir)).length; i++) await sleep(20);
+    // close() deletes everything the server kept.
     assert.deepEqual(await readdir(workDir), []);
+  });
+
+  it("runs the same encode as a job: submit, poll, download", async () => {
+    const server = createApp({ workDir });
+    const base = await server.listen({ host: "127.0.0.1", port: 0 });
+    try {
+      const body = new FormData();
+      body.append("preset", "ecommerce");
+      body.append("file", new Blob([await readFile(path.join(dir, "product.mov"))]), "product.mov");
+      const { id } = (await (await fetch(`${base}/jobs`, { method: "POST", body })).json()) as Job;
+
+      let job: Job;
+      do {
+        await sleep(100);
+        job = (await (await fetch(`${base}/jobs/${id}`)).json()) as Job;
+      } while (job.status === "queued" || job.status === "running");
+      assert.equal(job.status, "done", JSON.stringify(job.error));
+
+      const out = path.join(dir, "job.mp4");
+      await writeFile(out, Buffer.from(await (await fetch(`${base}/jobs/${id}/output`)).arrayBuffer()));
+      const info = await engine.probe(out);
+      assert.deepEqual([info.video?.width, info.video?.height, info.audio], [1280, 720, undefined]);
+      assert.equal(info.sizeBytes, job.sizeBytes);
+    } finally {
+      await server.close();
+    }
   });
 });

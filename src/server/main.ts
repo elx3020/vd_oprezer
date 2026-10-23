@@ -10,6 +10,9 @@ const app = createApp({
   ffprobePath: env.FFPROBE_PATH,
   maxUploadBytes: env.MAX_UPLOAD_MB ? Number(env.MAX_UPLOAD_MB) * 1024 ** 2 : undefined,
   workDir: env.WORK_DIR,
+  concurrency: env.CONCURRENCY ? Number(env.CONCURRENCY) : undefined,
+  maxQueued: env.MAX_QUEUED ? Number(env.MAX_QUEUED) : undefined,
+  jobTtlMs: env.JOB_TTL_MIN ? Number(env.JOB_TTL_MIN) * 60_000 : undefined,
   signal: controller.signal,
   logger: true,
 });

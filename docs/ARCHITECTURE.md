@@ -99,15 +99,25 @@ to FFmpeg untouched. Exit codes: 0 ok, 1 failure, 2 usage, 130 cancelled.
 ## The server
 
 `createApp(config)` in `server/index.ts` returns a Fastify app without
-listening, so tests start it on port 0. `POST /convert` streams the
-multipart upload to a per-request work dir, validates the fields with
-`parseEncodeOptions`, encodes with `buildArgs`, and streams the MP4 back.
-The work dir is deleted when the response closes. One AbortSignal per
-request combines client disconnect and server shutdown (`config.signal`).
-Core error codes map to HTTP statuses in one table (`ERRORS`); 422/5xx
-messages are fixed texts, so FFmpeg output and paths never leak.
-`main.ts` reads env (`PORT`, `HOST`, `MAX_UPLOAD_MB`, `WORK_DIR`,
+listening, so tests start it on port 0. Files:
+
+| File | Role |
+|---|---|
+| `index.ts` | Routes, multipart upload (`receive`), file downloads, startup/close hooks |
+| `jobs.ts` | In-memory job registry: submit, run through the limiter, progress, expiry, delete |
+| `queue.ts` | FIFO concurrency limiter shared by `/convert` and jobs |
+| `errors.ts` | `HttpError` and `publicError`: core error codes → HTTP status + safe message |
+
+Uploads stream to `<WORK_DIR>/vd-oprezer/{convert,jobs}/...`, options are
+checked with `parseEncodeOptions`, encodes use `buildArgs`. Every encode
+gets an AbortSignal combining server shutdown with client disconnect
+(`/convert`) or DELETE (jobs). 422/5xx messages are fixed texts, so FFmpeg
+output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
+`MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
 `FFMPEG_PATH`, `FFPROBE_PATH`) and handles SIGINT/SIGTERM.
+
+Jobs don't survive restarts yet; `docs/DECISIONS.md` (decision 7) describes
+the path to add that without changing the API.
 
 ## Tests
 
