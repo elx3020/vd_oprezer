@@ -10,8 +10,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 3 | Testing | ✅ done | `node:test` via tsx, no new deps |
 | 4 | CLI framework | ✅ done | commander 15 + `@commander-js/extra-typings` |
 | 5 | Presets & validation | ✅ done | Presets as typed data in core; zod 4 schema shared by CLI and HTTP |
-| 6 | **HTTP server & uploads** | ⏭ next | — |
-| 7 | Job queue | open | — |
+| 6 | HTTP server & uploads | ✅ done | Fastify 5 + `@fastify/multipart`, uploads streamed to disk |
+| 7 | **Job queue** | ⏭ next | — |
 | 8 | Progress reporting to HTTP clients | open | — |
 | 9 | Docker image | open | — |
 | 10 | CI | open | — |
@@ -145,10 +145,46 @@ can feed the HTTP API docs in decision 6.
 - Not done yet: cropping or padding to 9:16 (`--fit`), WebM/AV1 versions for
   the web, a 300 MB size check for Reels, and an `instagram-feed` (4:5) preset.
 
-## 6–10
+## 6. HTTP server & uploads ✅
+
+**Fastify 5 + @fastify/multipart.** Chosen over Express 5 + multer (logging,
+test requests and graceful shutdown would need 3–4 extra packages), Hono
+(its body parser keeps uploads in memory) and `node:http` + busboy (all the
+HTTP code by hand).
+
+```
+GET  /health    ffmpeg/ffprobe versions; 503 when FFmpeg is missing
+GET  /presets   PRESETS
+POST /convert   multipart: "file" + preset/crf/maxSize fields, in any order → the MP4
+```
+
+- `createApp(config)` in `server/index.ts` never listens or reads env.
+  `main.ts` reads `PORT` (3000), `HOST` (127.0.0.1; the Docker image will
+  set 0.0.0.0), `MAX_UPLOAD_MB` (2048), `WORK_DIR` (OS temp), `FFMPEG_PATH`
+  and `FFPROBE_PATH`.
+- The upload streams to `WORK_DIR/vd-*/upload`; the client's filename only
+  names the download, sanitised. Limits: 1 file, `MAX_UPLOAD_MB`, 10 short
+  fields. The work dir is deleted once the response is done, or on any error.
+- Options go through `parseEncodeOptions`, so unknown fields (raw FFmpeg
+  args, for example) are rejected with 400.
+- Errors: `INVALID_ARGUMENT` 400, too large / more than 1 file 413,
+  `PROBE_FAILED` 422, `FFMPEG_FAILED` 500, `FFMPEG_NOT_FOUND` 503. Messages
+  for 422/5xx are fixed texts, so FFmpeg output and server paths never reach
+  clients; 5xx are logged.
+- A client disconnect aborts the encode (FFmpeg killed). Shutdown
+  (SIGINT/SIGTERM) aborts every encode (503), closes the server, and exits
+  after 5 s at the latest: a client that stops reading its download would
+  otherwise keep `close()` waiting forever (seen in testing).
+- Tests: `server/index.test.ts` (fake runner over a real socket: uploads,
+  limits, field order, sanitising, error mapping, disconnect, shutdown),
+  `index.integration.test.ts` (real FFmpeg upload → 720p30 silent MP4) and
+  `main.test.ts` (spawns `main.ts`; SIGTERM part skipped on Windows).
+- Still synchronous: every request encodes at once and the client waits.
+  Jobs and a concurrency limit are decision 7.
+
+## 7–10
 
 Initial thoughts from the first discussion, to be confirmed:
-- 6 Server: express 5 + multer/busboy; `createApp(config)` in `server/index.ts`.
 - 7 Queue: `p-queue` in-process to start; BullMQ + Redis only if we need
   multiple workers or persistence.
 - 8 Progress to clients: Server-Sent Events.
