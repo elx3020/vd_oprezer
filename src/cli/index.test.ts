@@ -78,6 +78,24 @@ describe("cli", () => {
     assert.equal(runner.mock.callCount(), 0);
   });
 
+  describe("presets", () => {
+    it("lists presets, shows one, and rejects unknown names", async () => {
+      const list = await cli(["presets"]);
+      assert.equal(list.code, EXIT.ok);
+      assert.deepEqual(
+        list.stdout.trim().split("\n").map((line) => line.split(" ")[0]),
+        ["web", "ecommerce", "youtube", "instagram-reel"],
+      );
+
+      const one = await cli(["presets", "ecommerce"]);
+      assert.equal((JSON.parse(one.stdout) as { audioKbps: unknown }).audioKbps, false);
+
+      const unknown = await cli(["presets", "toString"]);
+      assert.equal(unknown.code, EXIT.usage);
+      assert.match(unknown.stderr, /unknown preset 'toString'. Available: web, ecommerce/);
+    });
+  });
+
   describe("probe", () => {
     it("prints a summary, or the full result with --json", async () => {
       const { code, stdout } = await cli(["probe", file("a.mov")]);
@@ -107,23 +125,47 @@ describe("cli", () => {
       assert.deepEqual(ffmpegArgs.slice(-5, -1), ["-c:v", "libx264", "-crf", "23"]);
     });
 
-    it("writes several inputs into --out-dir, keeping their names", async () => {
+    it("encodes with the chosen preset and overrides", async () => {
+      const { code } = await cli(["convert", file("a.mov"), "-p", "ecommerce", "--crf", "30", "--max-size", "240"]);
+      assert.equal(code, EXIT.ok);
+      const ffmpegArgs = runner.mock.calls.at(-1)?.arguments[1] ?? [];
+      assert.ok(ffmpegArgs.includes("-an"), "ecommerce drops audio");
+      assert.equal(ffmpegArgs[ffmpegArgs.indexOf("-crf") + 1], "30");
+      // The fake input is 640x360 rotated 90, so it displays as 360x640.
+      assert.equal(ffmpegArgs[ffmpegArgs.indexOf("-vf") + 1], "scale=240:426");
+    });
+
+    it("rejects invalid options with exit 2 before running anything", async () => {
+      const { code, stderr } = await cli(["convert", file("a.mov"), "-p", "tiktok", "--crf", "99"]);
+      assert.equal(code, EXIT.usage);
+      assert.match(stderr, /^error: Invalid options:/);
+      assert.match(stderr, /at preset/);
+      assert.match(stderr, /at crf/);
+      assert.equal(runner.mock.callCount(), 0);
+    });
+
+    it("names the output <name>-<preset>.mp4 next to the input by default", async () => {
+      assert.equal((await cli(["convert", file("a.mov")])).code, EXIT.ok);
+      assert.equal((await cli(["convert", file("a.mov"), "-p", "youtube"])).code, EXIT.ok);
+      assert.deepEqual((await readdir(dir)).sort(), ["a-web.mp4", "a-youtube.mp4", "a.mov", "b.mov"]);
+    });
+
+    it("writes <name>.mp4 for each input into --out-dir", async () => {
       const { code } = await cli(["convert", file("a.mov"), file("b.mov"), "--out-dir", file("out")]);
       assert.equal(code, EXIT.ok);
-      assert.deepEqual(await readdir(file("out")), ["a.mov", "b.mov"]);
+      assert.deepEqual(await readdir(file("out")), ["a.mp4", "b.mp4"]);
     });
 
     it("keeps going after a failed input and exits 1", async () => {
       const { code, stdout, stderr } = await cli(["convert", file("missing.mov"), file("b.mov"), "--out-dir", file("out")]);
       assert.equal(code, EXIT.error);
       assert.match(stderr, /^✗ .*missing\.mov: Input file not found/);
-      assert.match(stdout, /^✓ .*b\.mov/);
-      assert.deepEqual(await readdir(file("out")), ["b.mov"]);
+      assert.match(stdout, /^✓ .*b\.mp4/);
+      assert.deepEqual(await readdir(file("out")), ["b.mp4"]);
     });
 
-    it("needs exactly one of --output and --out-dir, and --output only with one input", async () => {
+    it("takes --output or --out-dir but not both, and --output only with one input", async () => {
       for (const argv of [
-        ["convert", file("a.mov")],
         ["convert", file("a.mov"), "-o", file("x.mp4"), "--out-dir", file("out")],
         ["convert", file("a.mov"), file("b.mov"), "-o", file("x.mp4")],
       ]) {

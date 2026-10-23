@@ -24,8 +24,11 @@ export interface TranscodeOptions extends CallOptions {
   /** Local file path. URLs and other FFmpeg protocols are rejected on purpose. */
   input: string;
   output: string;
-  /** Encoding arguments placed between the input and the output (codecs, filters, bitrate...). */
-  args: readonly string[];
+  /**
+   * Encoding arguments placed between the input and the output (codecs, filters, bitrate...),
+   * or a function that builds them from the probed input (e.g. `(info) => buildArgs(options, info)`).
+   */
+  args: readonly string[] | ((input: MediaInfo) => readonly string[]);
   /** Replace `output` if it exists. Default: false. */
   overwrite?: boolean;
   onProgress?: (progress: Progress) => void;
@@ -107,6 +110,7 @@ export function createEngine(config: EngineConfig = {}): Engine {
     }
 
     const info = await probe(input, { signal });
+    const encodeArgs = typeof args === "function" ? args(info) : args;
 
     const dir = path.dirname(output);
     const ext = path.extname(output);
@@ -122,7 +126,7 @@ export function createEngine(config: EngineConfig = {}): Engine {
       "-progress", "pipe:1",
       "-y",
       "-i", input,
-      ...args,
+      ...encodeArgs,
       temp,
     ];
 

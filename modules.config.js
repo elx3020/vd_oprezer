@@ -13,7 +13,7 @@
 /** @type {Record<string, { deps: string[], importsCore: boolean }>} */
 export const MODULES = {
   // Pure library: presets, FFmpeg argument building, running, probing.
-  core: { deps: [], importsCore: false },
+  core: { deps: ["zod"], importsCore: false },
 
   // Command-line interface. Talks to users via the terminal.
   // commander is extra-typings' peer: we import only the typed wrapper.

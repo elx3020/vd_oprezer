@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { createEngine } from "./engine.js";
+import { VdError } from "./errors.js";
 import type { RunResult, Runner } from "./runner.js";
 
 const PROBE_JSON = JSON.stringify({
@@ -64,6 +65,20 @@ describe("transcode", () => {
     assert.deepEqual(args?.slice(-6), ["-y", "-i", input, "-c:v", "libx264", temp]);
     assert.ok(args?.includes("-nostdin"));
     assert.deepEqual(args?.slice(args.indexOf("-progress"), args.indexOf("-progress") + 2), ["-progress", "pipe:1"]);
+  });
+
+  it("builds args from the probed input when given a function, before starting FFmpeg", async () => {
+    const runner = fakeRunner();
+    const engine = createEngine({ runner });
+    await engine.transcode({ input, output, args: (info) => ["-s", `${info.video?.width}x${info.video?.height}`] });
+    assert.deepEqual(runner.mock.calls[1]?.arguments[1].slice(-3, -1), ["-s", "640x360"]);
+
+    const refuse = () => {
+      throw new VdError("INVALID_ARGUMENT", "no");
+    };
+    await assert.rejects(engine.transcode({ input, output: path.join(dir, "b.mp4"), args: refuse }), { code: "INVALID_ARGUMENT" });
+    assert.equal(runner.mock.callCount(), 3, "only ffprobe ran for the refused job");
+    assert.deepEqual(await readdir(dir), ["in.mp4", "out.mp4"]);
   });
 
   it("reports progress against the probed duration", async () => {

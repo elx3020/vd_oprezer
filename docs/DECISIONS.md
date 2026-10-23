@@ -9,8 +9,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 2 | How core runs FFmpeg | ✅ done | `node:child_process` spawn, no runtime deps |
 | 3 | Testing | ✅ done | `node:test` via tsx, no new deps |
 | 4 | CLI framework | ✅ done | commander 15 + `@commander-js/extra-typings` |
-| 5 | **Presets & validation** | ⏭ next | — |
-| 6 | HTTP server & uploads | open | — |
+| 5 | Presets & validation | ✅ done | Presets as typed data in core; zod 4 schema shared by CLI and HTTP |
+| 6 | **HTTP server & uploads** | ⏭ next | — |
 | 7 | Job queue | open | — |
 | 8 | Progress reporting to HTTP clients | open | — |
 | 9 | Docker image | open | — |
@@ -108,11 +108,46 @@ vd-oprezer version          # also -V/--version, -h/--help
   there. It hasn't run yet; it will run in Docker/CI (decisions 9 and 10).
 - Later, if wanted: `@inquirer/prompts` for interactive prompts.
 
-## 5–10
+## 5. Presets & validation ✅
+
+**zod 4** checks what users choose (`encodeOptionsSchema` in
+`core/presets.ts`): `preset` (default `web`), `crf` (0–51) and `maxSize`
+(16–8192, short side). Unknown keys are rejected and numbers are coerced,
+because CLI flags and multipart fields arrive as strings. Chosen over
+valibot (less familiar, JSON Schema export is a separate package) and
+hand-written checks (type and checks drift apart, no JSON Schema). The cost
+is core's first runtime dependency; zod itself has none. `z.toJSONSchema`
+can feed the HTTP API docs in decision 6.
+
+- Presets are typed data (`PRESETS`), checked by TypeScript, not at runtime.
+- `buildArgs(options, mediaInfo)` turns options plus the probed input into
+  FFmpeg arguments. `engine.transcode` accepts `args` as a function of the
+  probe result, so this needs no second probe.
+- Raw FFmpeg arguments are not in the schema on purpose: only the CLI
+  (after `--`) may pass them, never the HTTP API.
+- All presets: libx264, yuv420p (4:2:0), MP4 with the index at the front
+  (`+faststart`). Sizes are rounded to even numbers. `maxSize` limits the
+  short side of the displayed (rotated) picture and never upscales.
+
+| Preset | Settings | Source |
+|---|---|---|
+| `web` | CRF 23, medium, max 1080, AAC 128k, metadata stripped | — |
+| `ecommerce` | CRF 22, slow, max 720, max 30 fps, **no audio**, metadata stripped. For silent product videos in cards and half-width sections (720 covers a ~half-width slot at 2× density) | Esteban's request |
+| `youtube` | CRF 18, slow, source size and fps, GOP = fps/2, 2 B-frames, AAC 384k 48 kHz | [YouTube upload settings](https://support.google.com/youtube/answer/1722171) |
+| `instagram-reel` | CRF 20, medium, max 1080, max 60 fps, max 25 Mbps, AAC 128k 48 kHz; rejects inputs outside 3 s to 15 min before encoding | [Meta IG media reference](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/) |
+
+- CLI: `convert -p <preset> [--crf n] [--max-size px]`, plus
+  `presets [name]`. Default output is `<name>-<preset>.mp4` next to the
+  input; `--out-dir` writes `<name>.mp4`.
+- Tests: `presets.test.ts` (schema, args per preset, scaling with rotation,
+  duration limits) and an integration test per preset that encodes with
+  real FFmpeg and checks the probed result.
+- Not done yet: cropping or padding to 9:16 (`--fit`), WebM/AV1 versions for
+  the web, a 300 MB size check for Reels, and an `instagram-feed` (4:5) preset.
+
+## 6–10
 
 Initial thoughts from the first discussion, to be confirmed:
-- 5 Presets: plain data objects validated with zod; one schema shared by CLI
-  flags and the HTTP body. Check current YouTube/Instagram specs before defining presets.
 - 6 Server: express 5 + multer/busboy; `createApp(config)` in `server/index.ts`.
 - 7 Queue: `p-queue` in-process to start; BullMQ + Redis only if we need
   multiple workers or persistence.

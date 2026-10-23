@@ -11,6 +11,15 @@ export {
   type TranscodeResult,
 } from "./engine.js";
 export { VdError, isVdError, type VdErrorCode, type VdErrorDetails } from "./errors.js";
+export {
+  PRESETS,
+  buildArgs,
+  encodeOptionsSchema,
+  parseEncodeOptions,
+  type EncodeOptions,
+  type Preset,
+  type PresetName,
+} from "./presets.js";
 export { parseProbeOutput, type AudioStreamInfo, type MediaInfo, type VideoStreamInfo } from "./probe.js";
 export { createProgressParser, type Progress } from "./progress.js";
 export { spawnRunner, type RunOptions, type RunResult, type Runner } from "./runner.js";

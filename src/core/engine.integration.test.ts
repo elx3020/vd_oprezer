@@ -8,6 +8,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { createEngine } from "./engine.js";
+import { buildArgs, parseEncodeOptions } from "./presets.js";
 
 const engine = createEngine();
 const available = await engine.versions().then(
@@ -23,6 +24,7 @@ describe("engine with real FFmpeg", { skip }, () => {
   let dir: string;
   let hd: string; // 1080p30 h264/aac, 2 s
   let small: string; // 320x240, 2 s, used as transcode input
+  let tall: string; // 1200x2000 portrait at 90 fps, 3.5 s: long enough for a Reel, too big and too fast
   const file = (name: string) => path.join(dir, name);
   const partials = async () => (await readdir(dir)).filter((f) => f.includes(".partial"));
 
@@ -33,6 +35,8 @@ describe("engine with real FFmpeg", { skip }, () => {
     const lavfi = (size: string) => ["-f", "lavfi", "-i", `testsrc2=size=${size}:rate=30`, "-f", "lavfi", "-i", "sine=frequency=440"];
     await ffmpeg(...lavfi("1920x1080"), "-t", "2", ...X264, "-shortest", hd);
     await ffmpeg(...lavfi("320x240"), "-t", "2", ...X264, "-shortest", small);
+    tall = file("tall.mp4");
+    await ffmpeg("-f", "lavfi", "-i", "testsrc2=size=1200x2000:rate=90", "-t", "3.5", "-c:v", "libx264", "-preset", "ultrafast", tall);
     // FFmpeg 6+ ignores -metadata:s:v rotate=90; -display_rotation writes the display matrix.
     await ffmpeg("-display_rotation", "90", "-i", small, "-c", "copy", file("rotated.mp4"));
     await writeFile(file("text.mp4"), "this is not a video");
@@ -116,6 +120,35 @@ describe("engine with real FFmpeg", { skip }, () => {
       // The runner settles only after FFmpeg's "close" event, so the process is gone by now.
       assert.deepEqual(await partials(), []);
       await assert.rejects(stat(file("endless.mp4")), { code: "ENOENT" });
+    });
+  });
+
+  describe("presets", () => {
+    const encode = (preset: string, input: string) =>
+      engine.transcode({ input, output: file(`${path.parse(input).name}-${preset}.mp4`), args: (info) => buildArgs(parseEncodeOptions({ preset }), info) });
+
+    it("web: keeps 1080p, AAC audio", async () => {
+      const info = await engine.probe((await encode("web", hd)).output);
+      assert.deepEqual([info.video?.codec, info.video?.width, info.video?.height, info.audio?.codec], ["h264", 1920, 1080, "aac"]);
+    });
+
+    it("ecommerce: 720p, no audio, index at the front of the file", async () => {
+      const out = (await encode("ecommerce", hd)).output;
+      const info = await engine.probe(out);
+      assert.deepEqual([info.video?.width, info.video?.height, info.video?.fps, info.audio], [1280, 720, 30, undefined]);
+      const head = (await readFile(out)).toString("latin1");
+      assert.ok(head.indexOf("moov") < head.indexOf("mdat"), "moov atom must come before mdat (faststart)");
+    });
+
+    it("youtube: keeps size, AAC at 48 kHz", async () => {
+      const info = await engine.probe((await encode("youtube", hd)).output);
+      assert.deepEqual([info.video?.width, info.video?.height, info.audio?.sampleRate], [1920, 1080, 48_000]);
+    });
+
+    it("instagram-reel: short side 1080 and 60 fps max; rejects clips under 3 s", async () => {
+      const info = await engine.probe((await encode("instagram-reel", tall)).output);
+      assert.deepEqual([info.video?.width, info.video?.height, info.video?.fps], [1080, 1800, 60]);
+      await assert.rejects(encode("instagram-reel", hd), { code: "INVALID_ARGUMENT", message: /2\.0s long/ });
     });
   });
 

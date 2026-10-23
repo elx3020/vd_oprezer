@@ -65,7 +65,7 @@ Skip step 2 and lint fails in that module and `check:deps` reports it.
 
 `createEngine({ ffmpegPath?, ffprobePath?, runner? })` returns
 `{ versions, probe, transcode }`. FFmpeg runs through Node's built-in
-`child_process.spawn`, so core has no runtime dependencies.
+`child_process.spawn`. core's only runtime dependency is zod (decision 5).
 
 | Behaviour | Why |
 |---|---|
@@ -76,6 +76,16 @@ Skip step 2 and lint fails in that module and `check:deps` reports it.
 | Inputs must be local files. | FFmpeg also accepts URLs and other protocols; the server must never let a client make it fetch arbitrary URLs. |
 | Expected failures throw `VdError` with a stable `code` (`INPUT_NOT_FOUND`, `OUTPUT_EXISTS`, `FFMPEG_FAILED`...) plus the stderr tail. | The CLI maps codes to exit codes, the server to HTTP statuses. |
 | The process runner is injectable (`runner`). | Unit tests can use a fake without FFmpeg installed. |
+
+## Presets (core)
+
+`PRESETS` are typed data. `parseEncodeOptions(unknown)` validates user
+choices with zod (`encodeOptionsSchema`) and throws `INVALID_ARGUMENT`
+listing every problem. `buildArgs(options, mediaInfo)` returns the FFmpeg
+arguments, adapted to the probed input: it scales the displayed size,
+caps the frame rate and rejects durations a preset doesn't accept. Pass
+it to the engine as `args: (info) => buildArgs(options, info)`. Raw FFmpeg
+arguments are never part of the schema, so HTTP clients can't inject them.
 
 ## The CLI
 

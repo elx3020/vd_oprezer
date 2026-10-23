@@ -2,7 +2,18 @@
 // time, so it can be tested and later published as its own package.
 import path from "node:path";
 import { Command, CommanderError } from "@commander-js/extra-typings";
-import { createEngine, isVdError, type EngineConfig, type MediaInfo, type Progress } from "#core";
+import {
+  PRESETS,
+  buildArgs,
+  createEngine,
+  isVdError,
+  parseEncodeOptions,
+  type EncodeOptions,
+  type EngineConfig,
+  type MediaInfo,
+  type PresetName,
+  type Progress,
+} from "#core";
 
 /** Where the CLI writes: a process stream, or a fake in tests. */
 export interface Output {
@@ -63,23 +74,44 @@ export async function run(argv: string[], ctx: CliContext = {}): Promise<number>
     });
 
   program
+    .command("presets")
+    .description("list presets, or show one preset's settings")
+    .argument("[name]")
+    .action((name, _opts, command) => {
+      if (name === undefined) {
+        for (const [key, preset] of Object.entries(PRESETS)) out(`${key.padEnd(16)}${preset.description}`);
+      } else if (Object.hasOwn(PRESETS, name)) {
+        out(JSON.stringify(PRESETS[name as PresetName], null, 2));
+      } else {
+        command.error(`error: unknown preset '${name}'. Available: ${Object.keys(PRESETS).join(", ")}`);
+      }
+    });
+
+  program
     .command("convert")
-    .description("encode one or more files; arguments after -- go to FFmpeg as-is")
+    .description("encode one or more files with a preset; arguments after -- go to FFmpeg last, as-is")
     .argument("<inputs...>")
-    .option("-o, --output <file>", "output file (one input only)")
-    .option("--out-dir <dir>", "write each output into this directory, keeping its file name")
+    .option("-p, --preset <name>", `${Object.keys(PRESETS).join(", ")} (default: web)`)
+    .option("--crf <n>", "quality, 0-51: lower is better and bigger (default: the preset's)")
+    .option("--max-size <px>", "shrink so the short side is at most this, e.g. 720 (default: the preset's)")
+    .option("-o, --output <file>", "output file (one input only; default: <name>-<preset>.mp4 next to the input)")
+    .option("--out-dir <dir>", "write <name>.mp4 for each input into this directory")
     .option("--overwrite", "replace outputs that already exist")
-    .addHelpText("after", "\nExample:\n  vd-oprezer convert in.mov -o out.mp4 -- -c:v libx264 -crf 23 -c:a aac -b:a 128k")
+    .addHelpText("after", "\nExamples:\n  vd-oprezer convert clip.mov -p ecommerce\n  vd-oprezer convert *.mov -p web --max-size 720 --out-dir out")
     .action(async (inputs, opts, command) => {
-      if (!opts.output === !opts.outDir) command.error("error: pass either --output or --out-dir");
+      if (opts.output && opts.outDir) command.error("error: pass --output or --out-dir, not both");
       if (opts.output && inputs.length > 1) command.error("error: --output takes one input; use --out-dir for several");
+      const options = encodeOptions({ preset: opts.preset, crf: opts.crf, maxSize: opts.maxSize }, command);
 
       for (const input of inputs) {
-        // ponytail: --out-dir keeps the input's name, so two inputs with the same name collide; the presets step decides naming.
-        const output = opts.output ?? path.join(opts.outDir ?? "", path.basename(input));
+        // ponytail: --out-dir names outputs after the input, so two inputs with the same name collide (OUTPUT_EXISTS).
+        const name = path.parse(input).name;
+        const output =
+          opts.output ?? (opts.outDir ? path.join(opts.outDir, `${name}.mp4`) : path.join(path.dirname(input), `${name}-${options.preset}.mp4`));
         const onProgress = stderr.isTTY ? (p: Progress) => stderr.write(progressLine(p)) : undefined;
         try {
-          const res = await engine.transcode({ input, output, args: ffArgs, overwrite: opts.overwrite, signal, onProgress });
+          const args = (info: MediaInfo) => [...buildArgs(options, info), ...ffArgs];
+          const res = await engine.transcode({ input, output, args, overwrite: opts.overwrite, signal, onProgress });
           if (onProgress) stderr.write("\n");
           const ratio = res.input.sizeBytes ? ` (${Math.round((res.sizeBytes / res.input.sizeBytes) * 100)}% of input)` : "";
           out(`✓ ${res.output}: ${formatBytes(res.sizeBytes)}${ratio} in ${(res.elapsedMs / 1000).toFixed(1)}s`);
@@ -107,6 +139,16 @@ export async function run(argv: string[], ctx: CliContext = {}): Promise<number>
       return EXIT.error;
     }
     throw error;
+  }
+}
+
+/** parseEncodeOptions, reporting problems as a usage error (exit 2). */
+function encodeOptions(raw: unknown, command: { error(message: string): never }): EncodeOptions {
+  try {
+    return parseEncodeOptions(raw);
+  } catch (error) {
+    if (!isVdError(error)) throw error;
+    return command.error(`error: ${error.message}`);
   }
 }
 
