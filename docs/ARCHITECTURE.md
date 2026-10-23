@@ -36,8 +36,8 @@ core depends on nothing of ours. cli and server never import each other.
 | 9 | **Tests sit next to the code** (`src/core/foo.test.ts`), so they move with their module. | Convention |
 | 10 | `dist/` mirrors `src/` (`dist/core`, `dist/cli`, `dist/server`). | `tsconfig.json` |
 
-`npm run check` runs typecheck + lint + deps check. Run it before every commit
-(and in CI later).
+`npm run check` runs typecheck + lint + deps check + tests. Run it before every
+commit (and in CI later).
 
 ### Adding a dependency
 
@@ -76,6 +76,13 @@ Skip step 2 and lint fails in that module and `check:deps` reports it.
 | Inputs must be local files. | FFmpeg also accepts URLs and other protocols; the server must never let a client make it fetch arbitrary URLs. |
 | Expected failures throw `VdError` with a stable `code` (`INPUT_NOT_FOUND`, `OUTPUT_EXISTS`, `FFMPEG_FAILED`...) plus the stderr tail. | The CLI maps codes to exit codes, the server to HTTP statuses. |
 | The process runner is injectable (`runner`). | Unit tests can use a fake without FFmpeg installed. |
+
+## Tests
+
+`node:test` + `node:assert/strict`, run by `tsx --conditions=source --test`.
+Files sit next to the code as `*.test.ts` and are left out of the build
+(`tsconfig.build.json`). `*.integration.test.ts` runs real FFmpeg on clips
+generated with lavfi in a temp dir, and skips itself when FFmpeg isn't on PATH.
 
 cli/server `main.ts` wire process signals to the AbortSignal and abort on
 `exit` too, so FFmpeg never keeps running as an orphan.

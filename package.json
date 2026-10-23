@@ -25,7 +25,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "check:deps": "node scripts/check-deps.js",
-    "check": "npm run typecheck && npm run lint && npm run check:deps"
+    "test": "tsx --conditions=source --test \"src/**/*.test.ts\"",
+    "test:watch": "tsx --conditions=source --test --watch \"src/**/*.test.ts\"",
+    "check": "npm run typecheck && npm run lint && npm run check:deps && npm test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

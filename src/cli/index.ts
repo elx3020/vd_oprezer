@@ -2,7 +2,7 @@
 // time, so it can be tested and later published as its own package.
 //
 // TEMPORARY hand-rolled argument handling to exercise the engine.
-// Replaced by a real CLI framework in decision 3.
+// Replaced by a real CLI framework in decision 4.
 import { createEngine, isVdError, type EngineConfig, type Progress } from "#core";
 
 export interface CliContext extends EngineConfig {

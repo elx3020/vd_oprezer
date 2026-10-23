@@ -60,6 +60,13 @@ export default tseslint.config(
     files: ["src/**/*.ts"],
     extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: { parserOptions: { projectService: true } },
+    rules: {
+      // node:test's describe/it return promises the runner itself awaits.
+      "@typescript-eslint/no-floating-promises": [
+        "error",
+        { allowForKnownSafeCalls: [{ from: "package", package: "node:test", name: ["describe", "it", "test", "suite"] }] },
+      ],
+    },
   },
 
   // Module boundaries.
