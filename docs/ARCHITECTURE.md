@@ -142,7 +142,8 @@ bundles the CLI and the server with esbuild (`npm run bundle` →
 plain Alpine + the `node` binary + FFmpeg + the bundles (no npm, no
 `node_modules`). `docker/entrypoint.sh` sends `serve` to the server and
 everything else to the CLI. See decision 9 for the enabled FFmpeg
-components and sizes.
+components and sizes. Pushing a `v*` tag publishes it to
+`ghcr.io/elx3020/vd_oprezer` (`.github/workflows/cd.yml`, decision 11).
 
 ## Splitting into separate packages (when needed)
 

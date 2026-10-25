@@ -15,6 +15,7 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 8 | Progress reporting to HTTP clients | ✅ done | Server-Sent Events, no deps; polling still works |
 | 9 | Docker image | ✅ done | Own minimal static FFmpeg + Alpine + node binary + bundled app: 65.5 MB compressed |
 | 10 | CI | ✅ done | GitHub Actions, one job: the Docker `test` stage + runtime image, GHA layer cache |
+| 11 | CD | ✅ done | Version tags publish the runtime image to GHCR, after the `test` stage |
 
 ---
 
@@ -341,5 +342,35 @@ thing CI should catch here).
   Dockerfile lines change, or after 7 days unused (GitHub evicts it).
 - A new push to the same branch or PR cancels the run still going.
   `contents: read` only; nothing is pushed anywhere.
-- Not done yet: publishing the image (GHCR on tags), Dependabot/Renovate,
-  branch protection requiring the check, a Windows job once others contribute.
+- Not done yet: Dependabot/Renovate, branch protection requiring the
+  check, a Windows job once others contribute. Publishing: decision 11.
+
+## 11. CD ✅
+
+**Pushing a version tag publishes the runtime image to GHCR**
+(`.github/workflows/cd.yml`). Chosen over publishing every push to `main`
+(an image per commit; nothing marks a release) and Docker Hub (a second
+account plus a token secret; GHCR uses the workflow's `GITHUB_TOKEN`).
+
+```
+git tag v0.2.0 && git push origin v0.2.0
+docker pull ghcr.io/elx3020/vd_oprezer:0.2.0     # also :0.2 and :latest
+```
+
+- Release steps: bump `version` in `package.json`, commit, tag `v<version>`,
+  push the tag. The job fails if the tag and `package.json` disagree,
+  because `vd-oprezer version` prints the `package.json` version.
+- The `test` stage runs again before the push: a tag can point at any
+  commit. It reads main's GHA cache, so a tag on a commit CI already built
+  rebuilds almost nothing. The job doesn't write to the cache (other refs
+  couldn't read a tag's cache).
+- Tags from `docker/metadata-action`: `1.2.3`, `1.2` and `latest`. A
+  pre-release tag (`v1.3.0-rc.1`) gets only its own tag, not `1.3` or
+  `latest`. OCI labels link the package to the repository.
+- Permissions: `contents: read`, `packages: write`. No secrets to set up.
+- Check the package's visibility under the repository's Packages after
+  the first publish. If it's public, the GPL note in decision 9 applies:
+  that's distributing a GPL build of FFmpeg.
+- Not done yet: arm64 images (FFmpeg would build under QEMU emulation,
+  much slower, or on an arm64 runner), signing/attestations, GitHub
+  Releases with notes.
