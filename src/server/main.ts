@@ -13,6 +13,7 @@ const app = createApp({
   concurrency: env.CONCURRENCY ? Number(env.CONCURRENCY) : undefined,
   maxQueued: env.MAX_QUEUED ? Number(env.MAX_QUEUED) : undefined,
   jobTtlMs: env.JOB_TTL_MIN ? Number(env.JOB_TTL_MIN) * 60_000 : undefined,
+  corsOrigins: env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean),
   signal: controller.signal,
   logger: true,
 });

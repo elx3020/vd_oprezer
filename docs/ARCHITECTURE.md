@@ -115,7 +115,11 @@ gets an AbortSignal combining server shutdown with client disconnect
 (`/convert`) or DELETE (jobs). 422/5xx messages are fixed texts, so FFmpeg
 output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
 `MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
-`FFMPEG_PATH`, `FFPROBE_PATH`) and handles SIGINT/SIGTERM.
+`CORS_ORIGINS`, `FFMPEG_PATH`, `FFPROBE_PATH`) and handles SIGINT/SIGTERM.
+
+Opt-in CORS (`corsOrigins`, comma-separated `CORS_ORIGINS`, `*` for any):
+an `onRequest` hook sets the headers on `reply.raw` so the hijacked SSE
+route keeps them; an `OPTIONS *` route answers preflights. Off by default.
 
 `GET /jobs/:id/events` streams job changes as Server-Sent Events:
 `jobs.subscribe(id, listener)` reports each change. The stream ends when
@@ -123,6 +127,25 @@ the job finishes or is deleted, or when shutdown starts (`preClose`).
 
 Jobs don't survive restarts yet; `docs/DECISIONS.md` (decision 7) describes
 the path to add that without changing the API.
+
+## The web demo (`web/`)
+
+Outside the module system: its own npm package (vanilla TypeScript + Vite,
+no runtime dependencies) with its own `npm run check` and workflow
+(`.github/workflows/web.yml`, deploys to GitHub Pages). It imports nothing
+from `src/` and talks to backends only over HTTP.
+
+| File | Role |
+|---|---|
+| `src/backend.ts` | The backend contract: `presets()`, `convert(file, presetId, events, signal)`, `BackendError` kinds |
+| `src/adapters/vd-oprezer.ts` | Maps the contract onto this server: XHR upload (progress), SSE job events, output download, DELETE |
+| `src/app.ts` | State and transitions, pure; visitor copy for each error kind |
+| `src/view.ts` | Updates the static markup in `index.html` in place |
+| `src/main.ts` | Composition root: build settings, `localStorage`, picks the adapter |
+
+Another backend = another adapter + changing the import in `main.ts`. The
+server allows the page's origin with `CORS_ORIGINS`. Details:
+`web/README.md` and `docs/DECISIONS.md` (11).
 
 ## Tests
 

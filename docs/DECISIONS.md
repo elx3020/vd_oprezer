@@ -15,6 +15,7 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 8 | Progress reporting to HTTP clients | ✅ done | Server-Sent Events, no deps; polling still works |
 | 9 | Docker image | ✅ done | Own minimal static FFmpeg + Alpine + node binary + bundled app: 65.5 MB compressed |
 | 10 | CI | ✅ done | GitHub Actions, one job: the Docker `test` stage + runtime image, GHA layer cache |
+| 11 | Web demo | ✅ done | `web/`: vanilla TypeScript + Vite on GitHub Pages, backend adapter, flow + expert log; opt-in CORS in the server |
 
 ---
 
@@ -343,3 +344,330 @@ thing CI should catch here).
   `contents: read` only; nothing is pushed anywhere.
 - Not done yet: publishing the image (GHCR on tags), Dependabot/Renovate,
   branch protection requiring the check, a Windows job once others contribute.
+
+## 11. Web demo ✅
+
+**What and why.** A public demo page on GitHub Pages where anyone can try
+the service: pick a video, pick a preset, watch it convert, see the size
+before and after, preview the result and download it. By default it runs
+against Esteban's own demo server. It shows off the API, but it's for
+regular visitors, not only developers: plain words by default, plus an
+**expert mode** that shows the technical trail (requests, live job events,
+timings) for anyone who wants to follow the process and the outcome.
+
+The web app is **independent** of core, cli and server. It lives in `web/`
+with its own `package.json` and CI, and imports nothing from `src/`. The UI
+talks to a small **backend contract** (what any video-conversion service
+does). One adapter maps that contract onto vd-oprezer's HTTP API; another
+service means another adapter, with no UI change.
+
+Esteban's choices:
+- **Stack: vanilla TypeScript + Vite**, plain CSS, no runtime dependencies.
+  Chosen over Preact + Vite (~5 KB, components and signals) and React +
+  Vite (~50 KB+): one screen with a few states doesn't need a framework,
+  and the adapter is plain TypeScript either way, so moving to Preact later
+  rewrites only the view.
+- **Layout: flow + side log.** Chosen over one column with a "Technical
+  details" box per step, and a step-by-step wizard.
+- **Audience:** visitors trying the API, with an expert mode. **Backend:**
+  his own public demo server by default, any URL in expert mode.
+- **Result view:** size before and after, plus a preview of the converted
+  video.
+
+Goals:
+- A visitor on the Pages site converts a clip on the demo server end to
+  end, and expert mode shows every step of it.
+- Connecting another backend = one new adapter file + changing the import
+  in `web/src/main.ts`. Nothing else in the UI changes.
+- A push to `main` that changes `web/` deploys the site; server changes
+  don't, and web changes don't run the server's Docker CI.
+
+Out of scope this round: hosting/deploying the demo server, auth or
+per-visitor rate limits, custom `crf`/`maxSize` in the UI, a history of
+past conversions, several files at once, an original-vs-result
+side-by-side, translations.
+
+Would make it a failure even if it works: UI code that knows vd-oprezer's
+URLs or JSON (that belongs in the adapter only); jargon or raw error codes
+in the default (non-expert) view; `web/` importing from `src/`.
+
+### 11a. Opt-in CORS in the server
+
+The server sends no CORS headers today, so a page on another origin can't
+call it. Add:
+
+- `ServerConfig.corsOrigins?: string[]`. Default: none, so no CORS headers
+  (same as today). `main.ts` reads `CORS_ORIGINS`, comma-separated; `*`
+  allows any origin. An origin is scheme + host (+ port), no path: the
+  Pages site `https://<user>.github.io/vd_oprezer/` sends
+  `Origin: https://<user>.github.io`.
+- An `onRequest` hook: when the request's `Origin` is allowed, set
+  `Access-Control-Allow-Origin` (that origin, or `*`) and `Vary: Origin`.
+  Set them with `reply.raw.setHeader`, not `reply.header()`: the SSE route
+  hijacks the reply and calls `writeHead` itself, so headers kept by
+  Fastify's reply never reach that response. Node merges `setHeader`
+  headers into `writeHead`.
+- Preflight: browsers send `OPTIONS` first for `DELETE /jobs/:id`, and
+  also for `POST /jobs`: an `XMLHttpRequest` with upload-progress listeners
+  is always preflighted. Plain `GET`s and `EventSource` aren't. The
+  multipart content type is CORS-safelisted, so no `Allow-Headers` is
+  needed. Answer an allowed preflight with 204,
+  `Access-Control-Allow-Methods: GET, POST, DELETE` and
+  `Access-Control-Max-Age: 86400`. Fastify has no `OPTIONS` routes, so it
+  would 404 without this.
+- Error responses (400, 404, 409, 413, 503) need the header too, or the
+  browser hides them and the page only sees a network error. The hook runs
+  before any route, so they get it.
+- No cookies or auth, so no `Allow-Credentials`. No exposed headers: the
+  Job body already carries the id and the download name.
+- Own hook (about 20 lines) over `@fastify/cors` (Claude's call, same
+  reasoning as SSE and the limiter in 7 and 8). Switch if we need more of
+  CORS than this.
+- Tests in `server/index.test.ts`: allowed origin gets the header on JSON,
+  on the SSE stream and on a 413 and a 503; another origin gets none;
+  preflight for POST and DELETE answers 204; with no `corsOrigins`, nothing
+  changes.
+  `main.test.ts` or a unit test for parsing `CORS_ORIGINS`.
+- Suggested demo server settings (docs only, Claude's guess):
+  `MAX_UPLOAD_MB=100`, `MAX_QUEUED=5`, `JOB_TTL_MIN=15`, `CONCURRENCY=1`,
+  `CORS_ORIGINS=https://<user>.github.io`, served over https (Pages is
+  https, and browsers block calls from it to plain-http remote servers).
+
+### 11b. The web app (`web/`)
+
+**Screen** (layout B):
+
+- Header: name, one-line pitch, **Expert** toggle.
+- Left, always shown — the flow:
+  1. Drop zone / browse ("up to 100 MB" when a limit is configured).
+  2. Preset cards from the backend: label + one-line description.
+  3. **Convert** button.
+  4. Progress: an **Uploading** bar (bytes sent), then **Converting**
+     (server percent), then a short **Preparing preview** while the result
+     downloads. **Cancel** throughout.
+  5. Done: "48.2 MB → 12.1 MB (75% smaller)", a `<video controls>` preview
+     of the result, **Download**, **Convert another**.
+  6. Failed: one plain sentence (below) + **Try again**.
+- Right, expert mode only — the **activity log**: one line per request or
+  event (time, label, status, duration, e.g. `POST /jobs 202 · 3.1 s`,
+  `job running 42%`); click a line to see its full JSON. The backend URL
+  field (with **Reset**) sits at the top of this panel. Also logged: the
+  result's resolution and duration, read from the preview's
+  `loadedmetadata`. Under ~800 px wide, the log stacks below the flow.
+- Expert mode is off by default; the choice and a custom backend URL are
+  remembered in `localStorage` (every access in try/catch, the page works
+  without it).
+- If loading presets fails on start, the flow shows "Can't reach the demo
+  server" and expert mode shows why. Changing the URL reloads presets.
+- Under the drop zone, one line: the video is deleted from the server once
+  it's converted and downloaded (true: the adapter deletes the job, and
+  `JOB_TTL_MIN` catches the rest).
+- Accessibility: the drop zone wraps a real `<input type="file">` (keyboard
+  and screen readers work), bars are `<progress>`, the status line is an
+  `aria-live="polite"` region, presets are radio buttons styled as cards.
+
+**Backend contract** (`web/src/backend.ts`), the only thing the UI knows
+about a backend:
+
+```ts
+export interface Preset { id: string; label: string; description: string }
+
+export type Phase = "uploading" | "queued" | "converting" | "downloading";
+
+export interface LogEntry { label: string; status?: number | string; ms?: number; data?: unknown }
+
+export interface ConvertEvents {
+  /** fraction is 0–1 when the backend knows it. */
+  progress(phase: Phase, fraction?: number): void;
+  /** One line in the expert log; the app adds the time and renders it. */
+  log(entry: LogEntry): void;
+}
+
+export interface Backend {
+  presets(): Promise<Preset[]>;
+  /** Resolves with the converted video; rejects with BackendError, or an AbortError on cancel. */
+  convert(file: File, presetId: string, events: ConvertEvents, signal: AbortSignal): Promise<{ blob: Blob; filename: string }>;
+}
+
+/** For "rejected", message is written for visitors and shown as is. */
+export type ErrorKind = "too_large" | "busy" | "unsupported" | "rejected" | "failed" | "expired" | "unreachable";
+export class BackendError extends Error { constructor(readonly kind: ErrorKind, message: string) { super(message) } }
+
+export type CreateBackend = (baseUrl: string) => Backend;
+```
+
+One `convert` call that ends with the file fits job-style APIs (like ours)
+and plain request/response ones alike. The adapter turns its backend's
+errors into an `ErrorKind`; the UI owns the wording:
+
+| Kind | vd-oprezer cause | Visitor sees |
+|---|---|---|
+| `too_large` | 413 | This file is too big for the demo (limit: N MB). |
+| `busy` | 503 `QUEUE_FULL` | The demo server is busy. Try again in a minute. |
+| `unsupported` | 422 `PROBE_FAILED`, or job error `PROBE_FAILED` (jobs probe after the 202) | That file doesn't look like a video we can read. |
+| `rejected` | 400, job error `INVALID_ARGUMENT` (no video stream, too short/long for a Reel) | The server's message, e.g. `Input is 2.1s long; "instagram-reel" accepts 3s to 900s.` |
+| `failed` | job `failed`, other 5xx | The conversion failed. |
+| `expired` | 404, SSE `deleted` | The result expired on the server. Please convert again. |
+| `unreachable` | network error (also CORS or mixed content), 502/504 from a proxy | Can't reach the demo server. |
+
+The server's own message always goes to the expert log.
+
+**vd-oprezer adapter** (`web/src/adapters/vd-oprezer.ts`):
+
+1. `presets()`: `GET /presets` → `{ id, label, description }` per entry;
+   label made from the id (`instagram-reel` → "Instagram reel").
+2. `convert()`:
+   - `POST /jobs` as `FormData` (`preset`, then `file`) with
+     **`XMLHttpRequest`**, because `fetch` can't report upload progress.
+     `upload.onprogress` → `uploading`. Log the 202 and the Job.
+   - `EventSource` on `/jobs/:id/events`: each `job` event → `queued` or
+     `converting` (progress / 100), and a log line. `done` → next step.
+     `failed` → `BackendError` from `job.error`. `deleted` → `expired`.
+     An `error` with `readyState === CLOSED` (404) → `expired`. An `error`
+     while `CONNECTING` is a dropped connection that EventSource retries by
+     itself; if it hasn't reconnected (`open`) within 30 s, give up →
+     `unreachable` (the job is deleted like a cancel). Not a plain "30 s
+     without events" timer: a queued job gets no events while it waits
+     (keep-alive comments don't fire any). **Always `close()` it** when it ends:
+     EventSource reconnects otherwise (see 8).
+   - `GET /jobs/:id/output` with `fetch`, reading the body stream to report
+     `downloading` against `job.sizeBytes`. Return the blob and
+     `job.filename` (already `<name>-<preset>.mp4`).
+   - Then `DELETE /jobs/:id`, best effort, so the demo server frees the
+     file now instead of after `JOB_TTL_MIN`.
+   - On abort at any point once the job exists: `xhr.abort()` / close the
+     stream / abort the fetch, `DELETE /jobs/:id` (best effort), reject with
+     an `AbortError`.
+3. The result is downloaded once: the preview (`URL.createObjectURL`) and
+   the Download link (`<a download=filename>`) share that blob. A
+   `download` link to another origin's URL is ignored by browsers, and
+   this avoids fetching the video twice. Revoke the object URL on
+   **Convert another**. Shortcut: the result sits in browser memory, fine
+   at demo sizes; stream to disk if limits grow a lot.
+
+**Configuration** (Vite build-time env, read in `main.ts` only):
+- `VITE_BACKEND_URL`: default backend URL. Local default
+  `http://localhost:3000`; the Pages build gets it from the repository
+  variable `DEMO_BACKEND_URL`.
+- `VITE_MAX_UPLOAD_MB` (optional): the demo server's `MAX_UPLOAD_MB`. The
+  page checks `file.size` before uploading and shows the limit under the
+  drop zone. It's also a safety net: a server that answers 413 before it
+  has read the whole upload can show up in the browser as a network error.
+- Swapping the backend: `main.ts` imports one adapter
+  (`import { createBackend } from "./adapters/vd-oprezer.js"`). Write
+  `adapters/<name>.ts` implementing `CreateBackend` and change that
+  import. Shortcut: no adapter registry or env switch until a second
+  adapter exists.
+
+**Files** (Claude's call, the builder may adjust):
+
+```
+web/
+  package.json      devDependencies only: vite, typescript, tsx, @types/node
+  tsconfig.json     lib dom + es2024, strict, types ["node"] for tests
+  vite.config.ts    base: "./" (works under /vd_oprezer/ on Pages and on a custom domain)
+  index.html
+  README.md         run it, point it at a server, write an adapter
+  src/
+    main.ts         composition root: env, localStorage, picks the adapter, wires state and view
+    backend.ts      the contract above
+    app.ts          state + transitions, no DOM (app.test.ts)
+    view.ts         render(state) → DOM, event handlers → app
+    style.css       plain CSS, light/dark via prefers-color-scheme
+    adapters/
+      vd-oprezer.ts (vd-oprezer.test.ts)
+```
+
+**States** (`app.ts`): `idle` (no file) → `ready` (file + preset) →
+`uploading` → `queued` → `converting` → `downloading` → `done` |
+`failed`. Cancel from any running state → `ready` (same file and preset).
+**Try again** → `ready`; **Convert another** → `idle`. The log lives in the
+state too, kept across conversions.
+
+**Tests and checks** (`web/`, `npm run check` = `tsc --noEmit` + tests +
+`vite build`):
+- `node:test` via tsx, the same runner as the main repo.
+- `adapters/vd-oprezer.test.ts`: the adapter against fakes of
+  `XMLHttpRequest`, `EventSource` and `fetch` put on `globalThis` in the
+  test, with no injection in production code. Covers: preset mapping;
+  the full run (upload progress → queued → converting 50% → done →
+  download progress → DELETE); a failed job → `failed`, an
+  `INVALID_ARGUMENT` job → `rejected` with the server's message; 413, 503,
+  422, 400, 404, 502, a network error and 30 s of reconnecting → their
+  kinds; abort while uploading → upload aborted and no DELETE (no job
+  exists yet; the server drops the partial upload); abort while converting
+  → DELETE + AbortError; the EventSource closed on every end.
+- `app.test.ts`: transitions, including cancel, try again, convert another.
+- Shortcuts: no DOM tests (the view is checked by hand; add Playwright if
+  it grows), no ESLint in `web/` yet.
+- By hand, before calling it done: `CORS_ORIGINS=http://localhost:5173
+  npm run dev:server`, `npm run dev` in `web/`; convert a lavfi clip, cancel
+  one, try one over the limit, stop the server mid-run, check the expert
+  log, a phone-width window and dark mode.
+
+**Root repo changes:**
+- `eslint.config.js`: ignore `web/**` (web has its own checks; the root
+  config would otherwise lint `web/dist`).
+- `.dockerignore`: add `web` (the image never uses it, and `web/node_modules`
+  would bloat the build context).
+- `.gitignore`: add `.superpowers/`. (`node_modules/` and `dist/` already
+  match inside `web/`.)
+- `.github/workflows/ci.yml`: `paths-ignore: ["web/**",
+  ".github/workflows/web.yml"]`, so web-only changes skip the Docker build.
+
+### 11c. Pages workflow (`.github/workflows/web.yml`)
+
+- Runs on pull requests and pushes to `main` that touch `web/**` or this
+  file, plus `workflow_dispatch`.
+- Job `check`: checkout, setup-node 24 with npm cache
+  (`web/package-lock.json`), `npm ci` and `npm run check` in `web/` with
+  `VITE_BACKEND_URL: ${{ vars.DEMO_BACKEND_URL }}` and
+  `VITE_MAX_UPLOAD_MB: ${{ vars.DEMO_MAX_UPLOAD_MB }}`. On `main` only,
+  upload `web/dist` with `actions/upload-pages-artifact`.
+- Job `deploy` (push to `main` only, needs `check`): `actions/deploy-pages`,
+  environment `github-pages`, `permissions: pages: write, id-token: write`.
+  Everything else `contents: read`.
+- Concurrency: PR runs cancel older runs of the same ref; deploys don't
+  cancel each other (group `pages`, `cancel-in-progress: false`), as GitHub
+  recommends.
+- One-time setup, by hand (goes in `web/README.md`): Settings → Pages →
+  Source: **GitHub Actions**; repository variables `DEMO_BACKEND_URL` and
+  `DEMO_MAX_UPLOAD_MB`; on the demo server, `CORS_ORIGINS` with the Pages
+  origin.
+
+### What building it showed
+
+- Implemented as designed: `src/server` (CORS hook + `CORS_ORIGINS`),
+  `web/` (Vite 8, TypeScript 6, 25 tests), `.github/workflows/web.yml`,
+  `paths-ignore` in `ci.yml`. Plan: `docs/superpowers/plans/2026-10-25-web-demo.md`.
+- Bug found by hand: an unreadable upload showed "The conversion failed."
+  Jobs probe after the 202, so `PROBE_FAILED` arrives as the job's error
+  code, not as a 422. The adapter now maps job error codes too
+  (`PROBE_FAILED` → `unsupported`, `INVALID_ARGUMENT` → `rejected`).
+- **The 413 question:** in Chromium, an upload over the server's limit gets
+  the real 413 and the "too big" message, not a network error. So
+  `VITE_MAX_UPLOAD_MB` stays optional (it still saves the upload).
+  Firefox and Safari not checked yet.
+- Checked by hand against real FFmpeg (Chromium): convert + preview +
+  download, cancel (job deleted), 413, a 2 s clip on `instagram-reel`
+  (server's message shown), a non-video file, server stopped mid-encode
+  ("Can't reach" 30 s after the drop), switching and resetting the backend
+  URL, expert mode remembered, 390 px wide, dark mode, keyboard only.
+- Smaller calls made while building: one progress bar whose label changes
+  with the phase; the presets error adds "Reload the page to try again.";
+  the adapter doesn't DELETE failed jobs (no output to free; the TTL
+  cleans the record); presets are logged by `main.ts` (the contract's
+  `presets()` has no log channel); `workflow_dispatch` also deploys, to
+  redeploy after changing the repository variables.
+- A fresh review then found three more, fixed with tests: a backend URL
+  changed while presets were still loading never loaded them; a refused
+  event stream (a proxy's 502 while the server is down) read as "expired",
+  so the adapter now asks `GET /jobs/:id` for the real status; a network
+  drop mid-download showed "conversion failed" and left the job behind.
+  Smaller polish it listed (stale-run guards, freeing the blob when the
+  preset changes on a result, plainer text for non-JSON 400/503, a hint when
+  a custom URL is set and expert mode is off, a malformed event, validating
+  `VITE_BACKEND_URL` at build time) is not done yet.
+- Not done yet: the demo server itself, Firefox/Safari checks, DOM tests
+  (Playwright) and ESLint in `web/`, an adapter registry (wait for a second
+  adapter).

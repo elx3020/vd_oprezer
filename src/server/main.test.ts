@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 it("listens on PORT, serves requests and shuts down on SIGTERM", { timeout: 20_000 }, async () => {
   const child = spawn(process.execPath, ["--import", "tsx", "--conditions=source", "src/server/main.ts"], {
     cwd: root,
-    env: { ...process.env, PORT: "0" },
+    env: { ...process.env, PORT: "0", CORS_ORIGINS: "https://demo.example, https://b.example" },
     stdio: ["ignore", "pipe", "inherit"],
   });
   try {
@@ -27,6 +27,9 @@ it("listens on PORT, serves requests and shuts down on SIGTERM", { timeout: 20_0
     const res = await fetch(`${base}/presets`);
     assert.equal(res.status, 200);
     assert.ok("ecommerce" in ((await res.json()) as object));
+    // CORS_ORIGINS is split on commas and trimmed.
+    const cors = await fetch(`${base}/presets`, { headers: { origin: "https://b.example" } });
+    assert.equal(cors.headers.get("access-control-allow-origin"), "https://b.example");
 
     // Windows has no catchable SIGTERM for child processes: kill() just terminates.
     if (process.platform === "win32") return;

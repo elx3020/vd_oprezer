@@ -13,3 +13,6 @@ dist-bundle/
 *.mov
 *.mkv
 *.webm
+
+# brainstorming mockups and plan scratch
+.superpowers/

@@ -30,6 +30,7 @@ npm run build                               # compile to dist/
 src/core/     library (presets, FFmpeg args, run, probe)
 src/cli/      command-line interface
 src/server/   HTTP service
+web/          demo page (own package, deployed to GitHub Pages): web/README.md
 modules.config.js   which npm packages each module may use
 docs/ARCHITECTURE.md   boundaries, guardrails, and how to split into packages
 ```

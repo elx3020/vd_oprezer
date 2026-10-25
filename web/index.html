@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Shrink a video for the web, YouTube or Instagram, right in your browser." />
+    <title>vd-oprezer demo</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <h1>vd-oprezer</h1>
+        <p class="pitch">Shrink a video for the web, YouTube or Instagram. Pick a file and a preset, and get a smaller MP4 back.</p>
+      </div>
+      <label class="switch"><input type="checkbox" id="expert" /> Expert mode</label>
+    </header>
+    <div class="bars" aria-hidden="true"></div>
+
+    <main class="layout">
+      <section class="flow" aria-label="Convert a video">
+        <div class="step">
+          <h2>Choose a video</h2>
+          <label class="drop" id="drop">
+            <input type="file" id="file" accept="video/*" />
+            <span id="drop-text">Drop a video here, or choose a file</span>
+          </label>
+          <p class="note" id="limit-note"></p>
+        </div>
+
+        <fieldset class="step" id="preset-set">
+          <legend><h2>Pick a preset</h2></legend>
+          <div class="presets" id="presets"></div>
+          <p class="error" id="presets-error" hidden>Can't reach the demo server. Reload the page to try again.</p>
+        </fieldset>
+
+        <div class="step" id="convert-step">
+          <button type="button" class="primary" id="convert" disabled>Convert</button>
+        </div>
+
+        <div class="step running" id="running" hidden>
+          <p class="phase" id="phase"></p>
+          <progress id="bar" max="1"></progress>
+          <button type="button" id="cancel">Cancel</button>
+        </div>
+
+        <div class="step result" id="result" hidden>
+          <p class="summary" id="summary"></p>
+          <div class="sizes" aria-hidden="true">
+            <span>Original</span><span class="size before" id="before-bar"></span>
+            <span>Converted</span><span class="size after" id="after-bar"></span>
+          </div>
+          <video id="video" controls playsinline></video>
+          <div class="actions">
+            <a class="button primary" id="download" download>Download</a>
+            <button type="button" id="another">Convert another</button>
+          </div>
+        </div>
+
+        <div class="step failure" id="failure" hidden>
+          <p class="error" id="failure-text"></p>
+          <button type="button" id="try-again">Try again</button>
+        </div>
+
+        <p class="visually-hidden" id="status" aria-live="polite"></p>
+      </section>
+
+      <aside class="log-panel" id="log-panel" aria-labelledby="log-title" hidden>
+        <h2 id="log-title">Activity</h2>
+        <form class="url-form" id="url-form">
+          <label for="url">Backend URL</label>
+          <div class="url-row">
+            <input id="url" type="url" required pattern="https?://.+" spellcheck="false" autocomplete="off" />
+            <button type="submit" id="connect">Connect</button>
+            <button type="button" id="reset-url">Reset</button>
+          </div>
+        </form>
+        <ol class="log" id="log"></ol>
+      </aside>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

@@ -5,7 +5,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # The web demo has its own workflow (web.yml).
+    paths-ignore: ["web/**", ".github/workflows/web.yml"]
   pull_request:
+    paths-ignore: ["web/**", ".github/workflows/web.yml"]
 
 concurrency:
   group: ci-${{ github.ref }}

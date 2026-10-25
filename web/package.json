@@ -1,0 +1,24 @@
+{
+  "name": "vd-oprezer-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Demo page for vd-oprezer, or any video-conversion backend with an adapter.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5"
+  }
+}
