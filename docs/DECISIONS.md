@@ -13,8 +13,8 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 6 | HTTP server & uploads | ✅ done | Fastify 5 + `@fastify/multipart`, uploads streamed to disk |
 | 7 | Job queue | ✅ done | In memory, own FIFO limiter, no deps; shaped for persistence later |
 | 8 | Progress reporting to HTTP clients | ✅ done | Server-Sent Events, no deps; polling still works |
-| 9 | **Docker image** | ⏭ next | — |
-| 10 | CI | open | — |
+| 9 | Docker image | ✅ done | Own minimal static FFmpeg + Alpine + node binary + bundled app: 65.5 MB compressed |
+| 10 | **CI** | ⏭ next | — |
 
 ---
 
@@ -105,7 +105,7 @@ vd-oprezer version          # also -V/--version, -h/--help
   `cli/main.test.ts` (spawns `main.ts` from source). The Ctrl+C test sends
   SIGINT to the process group and checks exit 130, no files left and no
   FFmpeg left. Windows can't send SIGINT to a child process, so it skips
-  there. It hasn't run yet; it will run in Docker/CI (decisions 9 and 10).
+  there; it runs and passes in the Docker test stage (decision 9).
 - Later, if wanted: `@inquirer/prompts` for interactive prompts.
 
 ## 5. Presets & validation ✅
@@ -178,7 +178,8 @@ POST /convert   multipart: "file" + preset/crf/maxSize fields, in any order → 
 - Tests: `server/index.test.ts` (fake runner over a real socket: uploads,
   limits, field order, sanitising, error mapping, disconnect, shutdown),
   `index.integration.test.ts` (real FFmpeg upload → 720p30 silent MP4) and
-  `main.test.ts` (spawns `main.ts`; SIGTERM part skipped on Windows).
+  `main.test.ts` (spawns `main.ts`; the SIGTERM part is skipped on Windows
+  and passes in the Docker test stage).
 - Decision 7 added jobs and a concurrency limit; `/convert` now waits for
   a slot in the same queue.
 
@@ -266,8 +267,62 @@ data: {"id":"…","status":"running","progress":42,…}     ← the full Job, sa
   running → 50 % → done, finished job, deleted while watched, 404,
   shutdown ends streams).
 
-## 9–10
+## 9. Docker image ✅
+
+Goal: as small as possible. **Our own minimal static FFmpeg** (option D)
+was chosen over Debian's FFmpeg on `node:24-slim` (A, hundreds of MB of
+libraries), Alpine's FFmpeg (B, every codec Alpine builds) and a prebuilt
+static FFmpeg (C, `mwader/static-ffmpeg` is 126 MB compressed on its own).
+
+Stages in `Dockerfile`:
+1. `ffmpeg` (`alpine:3.24`): x264 (pinned commit) + FFmpeg 9.0.2,
+   `--disable-everything`, then only what we use. Static musl binaries,
+   stripped: ffmpeg 14.6 MB + ffprobe 14.4 MB. About 2.5 min on 16 cores,
+   cached afterwards.
+2. `build` (`node:24.22.1-alpine3.24`): `npm ci`, `npm run bundle`
+   (`scripts/bundle.js`, esbuild: one file each for the CLI and the server).
+3. `test`: `npm run check` against this FFmpeg on Linux (101 tests, nothing
+   skipped, including CLI Ctrl+C and server SIGTERM), then a smoke test of
+   the bundles. `docker build --target test .`
+4. Runtime (`alpine:3.24` + `libstdc++` + the `node` binary copied from the
+   node image): no npm/yarn, no `node_modules`. Non-root user `node`.
+   `HOST=0.0.0.0 PORT=3000 WORK_DIR=/tmp/vd`. Health check on `/health`.
+   `docker/entrypoint.sh`: `serve` (default) starts the server, anything
+   else goes to the CLI. Node runs as PID 1 and handles SIGTERM itself.
+
+FFmpeg components enabled (an input format not listed fails cleanly with
+422 / `FFMPEG_FAILED`; add it to the configure flags and rebuild):
+- Demuxers: mov (MOV/MP4/M4V/3GP), matroska (MKV/WebM), avi, mpegts,
+  mpegps, flv, ogg, wav. Muxers: mp4, mov.
+- Decoders: h264, hevc, vp8, vp9, prores, mpeg4, mpeg2video, mjpeg; aac,
+  mp3, opus, vorbis, flac, alac, ac3, eac3, pcm. **No AV1 decoding** (it
+  needs libdav1d, another library to build). Add it if AV1 uploads show up.
+- Encoders: libx264, aac. Filters: scale, fps, aresample, transpose, hflip,
+  vflip, loop. `lavfi`, `testsrc2` and `sine` are enabled only so the test
+  suite can generate clips with the same FFmpeg (a few KB).
+
+Size, measured (compressed = what a pull downloads):
+
+| Step | Compressed | Uncompressed |
+|---|---|---|
+| `node:24-alpine` + FFmpeg + `node_modules` | 77.3 MB | 320 MB |
+| Base: plain Alpine + `node` binary (no npm/yarn) | 68.4 MB | 196 MB |
+| App bundled with esbuild (no `node_modules`) | **65.5 MB** | **168 MB** |
+
+What's left: the `node` binary (126 MB uncompressed) is the floor, then
+FFmpeg (29 MB). Building FFmpeg as shared libraries would stop ffmpeg and
+ffprobe each carrying their own copy, an estimated ~4 MB compressed more.
+Not done yet.
+
+- Usage: `docker run -p 3000:3000 vd-oprezer`, or
+  `docker run --rm -v "$PWD:/data" -w /data vd-oprezer convert clip.mov -p ecommerce`.
+  On Linux hosts, add `--user "$(id -u):$(id -g)"` so outputs in the
+  mounted folder belong to you.
+- Verified by hand: a job over SSE and its download, `docker stop` (exit 0
+  in 0.6 s), CLI convert and probe on a mounted folder, health check healthy.
+- libx264 makes this a GPL build of FFmpeg: fine for running a service,
+  with GPL obligations if the image is distributed.
+
+## 10
 
 Initial thoughts from the first discussion, to be confirmed:
-- 9 Docker: `node:24-slim` + FFmpeg (maybe a static build for newer encoders);
-  one image, `convert`/`serve` entrypoints.

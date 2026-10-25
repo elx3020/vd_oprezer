@@ -20,6 +20,7 @@
     "dev:cli": "tsx --conditions=source src/cli/main.ts",
     "dev:server": "tsx watch --conditions=source src/server/main.ts",
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "bundle": "node scripts/bundle.js",
     "start:cli": "node dist/cli/main.js",
     "start:server": "node dist/server/main.js",
     "typecheck": "tsc --noEmit",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
     "tsx": "^4.23.15",

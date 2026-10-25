@@ -30,6 +30,9 @@ npm test                    # node:test via tsx; FFmpeg tests skip if not on PAT
 npm run test:watch
 npm run check               # must pass before a change is done
 npm run build               # tsc → dist/
+npm run bundle              # esbuild → dist-bundle/ (what the Docker image runs)
+docker build -t vd-oprezer .          # runtime image
+docker build --target test .          # npm run check on Linux with the image's FFmpeg
 ```
 
 ## Rules the tooling enforces (don't work around them)
@@ -57,5 +60,9 @@ npm run build               # tsc → dist/
   `ffmpeg -display_rotation 90 -i in.mp4 -c copy out.mp4`.
 - Windows PowerShell 5.1 splits `-c:v` into `-c:` `v` when calling native
   programs. Quote FFmpeg options with a colon: `-- '-c:v' libx264`.
+- The image's FFmpeg is built with `--disable-everything`. A new filter,
+  codec or format used in code or tests must also be enabled in the
+  `Dockerfile` configure flags, or it works locally and fails in Docker.
+  `docker build --target test .` catches it.
 - Generate test media with lavfi instead of committing binaries, e.g.
   `ffmpeg -f lavfi -i testsrc2=size=1920x1080:rate=30 -f lavfi -i sine=frequency=440 -t 5 -c:v libx264 -preset ultrafast -c:a aac -shortest src.mp4`

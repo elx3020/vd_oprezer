@@ -133,6 +133,16 @@ generated with lavfi in a temp dir, and skips itself when FFmpeg isn't on PATH.
 cli/server `main.ts` wire process signals to the AbortSignal and abort on
 `exit` too, so FFmpeg never keeps running as an orphan.
 
+## Docker image
+
+`Dockerfile` builds a minimal static FFmpeg (only the components we use),
+bundles the CLI and the server with esbuild (`npm run bundle` →
+`dist-bundle/`), runs the full check on Linux in a `test` stage, and ships
+plain Alpine + the `node` binary + FFmpeg + the bundles (no npm, no
+`node_modules`). `docker/entrypoint.sh` sends `serve` to the server and
+everything else to the CLI. See decision 9 for the enabled FFmpeg
+components and sizes.
+
 ## Splitting into separate packages (when needed)
 
 1. Move `src/<name>/` → `packages/<name>/src/` for each module.
@@ -147,7 +157,7 @@ cli/server `main.ts` wire process signals to the AbortSignal and abort on
    `tsconfig.json` per package that extends it.
 5. Point the boundary rules in `eslint.config.js` at `packages/*/src` (or drop
    rule 4, since per-package `dependencies` now do that job).
-6. Update the Dockerfile to copy `packages/`.
+6. Update the Dockerfile and `scripts/bundle.js` to use `packages/*/src`.
 
 None of the module code changes: imports inside a module are relative,
 and imports across modules all go through one alias.

@@ -51,7 +51,7 @@ function boundary(name) {
 }
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**"] },
+  { ignores: ["dist/**", "dist-bundle/**", "node_modules/**"] },
   js.configs.recommended,
 
   // Type-aware linting for the TypeScript sources (catches un-awaited promises,
