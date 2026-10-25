@@ -14,7 +14,7 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 7 | Job queue | ✅ done | In memory, own FIFO limiter, no deps; shaped for persistence later |
 | 8 | Progress reporting to HTTP clients | ✅ done | Server-Sent Events, no deps; polling still works |
 | 9 | Docker image | ✅ done | Own minimal static FFmpeg + Alpine + node binary + bundled app: 65.5 MB compressed |
-| 10 | **CI** | ⏭ next | — |
+| 10 | CI | ✅ done | GitHub Actions, one job: the Docker `test` stage + runtime image, GHA layer cache |
 
 ---
 
@@ -323,6 +323,23 @@ Not done yet.
 - libx264 makes this a GPL build of FFmpeg: fine for running a service,
   with GPL obligations if the image is distributed.
 
-## 10
+## 10. CI ✅
 
-Initial thoughts from the first discussion, to be confirmed:
+**GitHub Actions, one Docker job** (`.github/workflows/ci.yml`), on pushes
+to `main` and on pull requests: `docker build --target test .`, then the
+runtime image. Chosen over adding a native Windows job (B: repeats the
+`npm run check` Esteban runs locally before a change is done, with a
+Chocolatey FFmpeg that isn't 9.0.2 and signal tests that skip there
+anyway) and a native Ubuntu job (C: apt's FFmpeg 6.1 has every codec, so
+it would miss a filter or codec not enabled in the Dockerfile, the main
+thing CI should catch here).
+
+- CI tests what ships: same FFmpeg, Node and Alpine, nothing skipped
+  (CLI Ctrl+C, server SIGTERM), plus the bundle smoke test.
+- Layer cache in the GitHub Actions cache (`type=gha,mode=max`), so the
+  FFmpeg stage (~10 min on a 4-core runner) is rebuilt only when its
+  Dockerfile lines change, or after 7 days unused (GitHub evicts it).
+- A new push to the same branch or PR cancels the run still going.
+  `contents: read` only; nothing is pushed anywhere.
+- Not done yet: publishing the image (GHCR on tags), Dependabot/Renovate,
+  branch protection requiring the check, a Windows job once others contribute.

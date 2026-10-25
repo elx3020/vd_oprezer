@@ -1,0 +1,37 @@
+# The Docker test stage is the whole CI: npm run check on Linux against the
+# image's own FFmpeg, then the runtime image. See docs/DECISIONS.md (10).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Check (docker build --target test)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: test
+          # mode=max also caches the FFmpeg stage, so it's built once, not per run.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Runtime image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          tags: vd-oprezer:ci
+          cache-from: type=gha

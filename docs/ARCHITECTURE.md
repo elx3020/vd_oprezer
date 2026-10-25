@@ -37,7 +37,8 @@ core depends on nothing of ours. cli and server never import each other.
 | 10 | `dist/` mirrors `src/` (`dist/core`, `dist/cli`, `dist/server`). | `tsconfig.json` |
 
 `npm run check` runs typecheck + lint + deps check + tests. Run it before every
-commit (and in CI later).
+commit. CI (`.github/workflows/ci.yml`) runs it on Linux inside the Docker
+`test` stage on every push to `main` and every pull request.
 
 ### Adding a dependency
 
