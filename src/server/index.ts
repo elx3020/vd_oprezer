@@ -9,7 +9,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from "fastify";
-import { PRESETS, buildArgs, createEngine, parseEncodeOptions, type EncodeOptions, type EngineConfig } from "#core";
+import { PRESETS, buildArgs, createEngine, outputDimensions, parseEncodeOptions, type EncodeOptions, type EngineConfig } from "#core";
 import { HttpError, publicError } from "./errors.js";
 import { createJobs, type Job } from "./jobs.js";
 import { createLimiter } from "./queue.js";
@@ -78,6 +78,7 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
       const res = reply.raw;
       res.setHeader("access-control-allow-origin", any ? "*" : origin);
       if (!any) res.setHeader("vary", "Origin");
+      res.setHeader("access-control-expose-headers", "X-Output-Width, X-Output-Height, X-Output-Duration-Ms");
       if (req.method === "OPTIONS") {
         res.setHeader("access-control-allow-methods", "GET, POST, DELETE");
         res.setHeader("access-control-allow-headers", "authorization");
@@ -178,7 +179,11 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     const output = path.join(dir, "output.mp4");
     try {
       const { filename, options } = await receive(req, input);
-      await limiter.run(() => engine.transcode({ input, output, args: (info) => buildArgs(options, info), signal: reqSignal }), reqSignal);
+      const result = await limiter.run(() => engine.transcode({ input, output, args: (info) => buildArgs(options, info), signal: reqSignal }), reqSignal);
+      // The caller stores these beside the file (e.g. as Storage metadata) without probing it again.
+      const { width, height } = outputDimensions(options, result.input);
+      void reply.header("x-output-width", String(width)).header("x-output-height", String(height));
+      if (result.input.durationMs !== undefined) void reply.header("x-output-duration-ms", String(Math.round(result.input.durationMs)));
       return sendFile(reply, output, filename, cleanup);
     } catch (error) {
       cleanup();

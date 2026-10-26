@@ -122,6 +122,16 @@ export function buildArgs(options: EncodeOptions, input: MediaInfo): string[] {
   return args;
 }
 
+/** The displayed size the encode produces: the scaled size, or the input's when it is kept. */
+export function outputDimensions(options: EncodeOptions, input: MediaInfo): { width: number; height: number } {
+  const v = input.video;
+  if (!v) throw new VdError("INVALID_ARGUMENT", "Input has no video stream.");
+  const p: Preset = PRESETS[options.preset];
+  const scaled = outputSize(v, options.maxSize ?? p.maxSize);
+  if (scaled) return scaled;
+  return v.rotation % 180 === 90 ? { width: v.height, height: v.width } : { width: v.width, height: v.height };
+}
+
 /**
  * Output size, or undefined to keep the input's. Shrinks the short side to
  * `maxSize` and rounds to even numbers, which yuv420p requires.

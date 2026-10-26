@@ -15,6 +15,7 @@ export {
   PRESETS,
   buildArgs,
   encodeOptionsSchema,
+  outputDimensions,
   parseEncodeOptions,
   type EncodeOptions,
   type Preset,

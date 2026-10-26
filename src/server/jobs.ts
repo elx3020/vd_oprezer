@@ -4,7 +4,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyBaseLogger } from "fastify";
-import { buildArgs, type EncodeOptions, type Engine } from "#core";
+import { buildArgs, outputDimensions, type EncodeOptions, type Engine } from "#core";
 import { publicError } from "./errors.js";
 import type { Limiter } from "./queue.js";
 
@@ -25,6 +25,10 @@ export interface Job {
   createdAt: string;
   finishedAt?: string;
   sizeBytes?: number;
+  /** The output's displayed size and duration, once done. */
+  width?: number;
+  height?: number;
+  durationMs?: number;
   error?: { code: string; message: string };
 }
 
@@ -106,7 +110,7 @@ export function createJobs({ engine, limiter, dir, ttlMs, signal, log }: JobsCon
           changed();
         },
       });
-      Object.assign(job, { status: "done", progress: 100, sizeBytes: res.sizeBytes });
+      Object.assign(job, { status: "done", progress: 100, sizeBytes: res.sizeBytes, ...outputDimensions(job.options, res.input), durationMs: res.input.durationMs });
     };
 
     entry.done = limiter

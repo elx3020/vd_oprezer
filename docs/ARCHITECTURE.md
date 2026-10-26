@@ -112,7 +112,10 @@ listening, so tests start it on port 0. Files:
 Uploads stream to `<WORK_DIR>/vd-oprezer/{convert,jobs}/...`, options are
 checked with `parseEncodeOptions`, encodes use `buildArgs`. Every encode
 gets an AbortSignal combining server shutdown with client disconnect
-(`/convert`) or DELETE (jobs). 422/5xx messages are fixed texts, so FFmpeg
+(`/convert`) or DELETE (jobs). `/convert` reports the output's size in
+`X-Output-Width` / `X-Output-Height` / `X-Output-Duration-Ms`, and a done
+job carries `width` / `height` / `durationMs`, both from core's
+`outputDimensions` (the size `buildArgs` scales to; no second probe). 422/5xx messages are fixed texts, so FFmpeg
 output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
 `MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
 `CORS_ORIGINS`, `AUTH_KEY`, `FFMPEG_PATH`, `FFPROBE_PATH`) and handles

@@ -99,6 +99,14 @@ describe("POST /convert", () => {
     await workDirEmpty();
   });
 
+  it("reports the output's width, height and duration in headers", async () => {
+    await start();
+    const res = await convert(form({ preset: "ecommerce", maxSize: "480" }));
+    assert.equal(res.headers.get("x-output-width"), "852");
+    assert.equal(res.headers.get("x-output-height"), "480");
+    assert.equal(res.headers.get("x-output-duration-ms"), "10000");
+  });
+
   it("accepts option fields after the file, and defaults to web", async () => {
     const runner = await start();
     const body = form({}, { name: "a.mov", content: "x" });
@@ -266,6 +274,7 @@ describe("jobs", () => {
     assert.equal(done.progress, 100);
     assert.equal(done.sizeBytes, "encoded".length);
     assert.deepEqual(done.options, { preset: "ecommerce" });
+    assert.deepEqual([done.width, done.height, done.durationMs], [1280, 720, 10_000]);
     assert.ok(done.finishedAt);
     // The upload is deleted once the encode is over; only the output stays.
     await until(async () => (await readdir(path.join(workDir, "vd-oprezer", "jobs", created.id))).length === 1);
@@ -476,6 +485,7 @@ describe("CORS", () => {
     const ok = await fetch(`${base}/presets`, { headers: { origin } });
     assert.equal(acao(ok), origin);
     assert.match(ok.headers.get("vary") ?? "", /origin/i);
+    assert.equal(ok.headers.get("access-control-expose-headers"), "X-Output-Width, X-Output-Height, X-Output-Duration-Ms");
     assert.equal(acao(await fetch(`${base}/presets`, { headers: { origin: "https://other.example" } })), null);
   });
 

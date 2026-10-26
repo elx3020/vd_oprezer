@@ -18,6 +18,7 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 11 | CD | ✅ done | Version tags publish the runtime image to GHCR, after the `test` stage |
 | 12 | Web demo | ✅ done | `web/`: vanilla TypeScript + Vite on GitHub Pages, backend adapter, flow + expert log; opt-in CORS in the server |
 | 13 | Auth key & config visibility | ✅ done | Optional `AUTH_KEY` read at runtime, `Authorization: Bearer`; redacted config in the startup log and `GET /config`; local `.env.local`; the web demo sends the key (fetch-based SSE) |
+| 14 | Output size reporting | ✅ done | `X-Output-*` headers on `/convert`, `width`/`height`/`durationMs` on a done job; computed, not probed |
 
 ---
 
@@ -776,3 +777,23 @@ SSE; `CORS_ORIGINS=*` for local dev.
   hand in Chromium against the real server with `.env.local`: convert end
   to end, wrong key → the message above, Reset → presets load again; the
   production build doesn't contain the key.
+
+## 14. Output size reporting ✅
+
+A caller storing the output (selvashop's n8n video workflow writes each
+quality to Supabase Storage with its size in the metadata) needs the
+encoded file's width and height. It should not have to probe the file
+again, and it must not copy the rounding rule either, or the two would drift.
+
+- **Computed, not probed:** `outputDimensions(options, input)` in core
+  reuses `outputSize`, the rule `buildArgs` scales with, so the reported
+  size is the one FFmpeg was asked for (displayed size: rotation applied,
+  even numbers, never upscaled). A second ffprobe after every encode would
+  cost a process spawn for a number we already know.
+- **`POST /convert`** answers with `X-Output-Width`, `X-Output-Height` and,
+  when the input's duration is known, `X-Output-Duration-Ms` (the input's:
+  neither the fps cap nor scaling changes it). The CORS hook lists them in
+  `Access-Control-Expose-Headers` so a browser client can read them too.
+- **Jobs:** a done job carries `width`, `height`, `durationMs`.
+- Tests: `outputDimensions` (landscape cap, rotated portrait, no upscale),
+  the three headers, the job fields, the exposed headers.

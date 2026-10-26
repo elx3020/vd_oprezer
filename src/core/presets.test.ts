@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { MediaInfo, VideoStreamInfo } from "./probe.js";
-import { buildArgs, parseEncodeOptions } from "./presets.js";
+import { buildArgs, outputDimensions, parseEncodeOptions } from "./presets.js";
 
 function media(video: Partial<VideoStreamInfo> = {}, durationMs = 10_000): MediaInfo {
   return {
@@ -101,5 +101,17 @@ describe("buildArgs", () => {
 
   it("fails clearly on an input without video", () => {
     assert.throws(() => buildArgs(parseEncodeOptions({}), { ...media(), video: undefined }), { code: "INVALID_ARGUMENT", message: /no video stream/ });
+  });
+});
+
+describe("outputDimensions", () => {
+  const dims = (options: unknown, info: MediaInfo) => outputDimensions(parseEncodeOptions(options), info);
+
+  it("caps the short side and keeps even numbers", () => {
+    assert.deepEqual(dims({ preset: "ecommerce", maxSize: 480 }, media()), { width: 852, height: 480 });
+  });
+
+  it("reports the displayed size of a rotated portrait input and never upscales", () => {
+    assert.deepEqual(dims({ preset: "ecommerce", maxSize: 1080 }, media({ width: 1280, height: 720, rotation: 90 })), { width: 720, height: 1280 });
   });
 });
