@@ -17,6 +17,7 @@ Each step: compare options → Esteban chooses → implement with tests →
 | 10 | CI | ✅ done | GitHub Actions, one job: the Docker `test` stage + runtime image, GHA layer cache |
 | 11 | CD | ✅ done | Version tags publish the runtime image to GHCR, after the `test` stage |
 | 12 | Web demo | ✅ done | `web/`: vanilla TypeScript + Vite on GitHub Pages, backend adapter, flow + expert log; opt-in CORS in the server |
+| 13 | Auth key & config visibility | ✅ done | Optional `AUTH_KEY` read at runtime, `Authorization: Bearer`; redacted config in the startup log and `GET /config`; local `.env.local`; the web demo sends the key (fetch-based SSE) |
 
 ---
 
@@ -206,7 +207,7 @@ DELETE /jobs/:id          cancel (kills FFmpeg) and delete files → 204
   `MAX_QUEUED` (20 waiting encodes, jobs and `/convert` together; more get
   503 `QUEUE_FULL` before the upload is read), `JOB_TTL_MIN` (60: finished
   jobs and outputs are deleted after this, downloaded or not).
-- Job ids are random UUIDs, so job URLs can't be guessed (there is no auth).
+- Job ids are random UUIDs, so job URLs can't be guessed (auth is optional, decision 13).
   Paths are only built from ids of known jobs.
 - Files: `WORK_DIR/vd-oprezer/jobs/<id>/upload`, deleted when the encode
   ends, then `output.mp4`. `/convert` uses `WORK_DIR/vd-oprezer/convert/`.
@@ -704,3 +705,74 @@ state too, kept across conversions.
 - Not done yet: the demo server itself, Firefox/Safari checks, DOM tests
   (Playwright) and ESLint in `web/`, an adapter registry (wait for a second
   adapter).
+
+---
+
+## 13. Auth key & config visibility ✅
+
+**Optional key from the runtime env (`AUTH_KEY`), not baked in at build
+time.** A Docker `ARG`/`ENV` or an esbuild `define` would leave the key in
+the image (`docker history`, `docker inspect`, or plain text in the bundle),
+and CD publishes every `v*` tag to GHCR. A BuildKit secret mount still
+writes the key into the published image. Read at runtime it never touches
+the image and changes without a rebuild (`docker run -e AUTH_KEY=...`).
+
+```
+GET /config   the server's settings after defaults; authKey "***" or null
+```
+
+- `ServerConfig.authKey?: string`. Unset or empty = no auth, as before.
+  Set = every request needs `Authorization: Bearer <key>`, otherwise 401
+  `UNAUTHORIZED` with `WWW-Authenticate: Bearer`, before the upload is read.
+- Compared with `timingSafeEqual` on SHA-256 hashes, so neither the key nor
+  its length leaks through timing.
+- Open without the key: `GET /health` (the Docker `HEALTHCHECK` has none;
+  it only returns FFmpeg versions) and `OPTIONS` (browsers send preflights
+  without credentials). The auth hook runs after the CORS hook, so a 401
+  still has CORS headers; preflights now allow the `authorization` header.
+- Startup log: one `config` line (Fastify logger, before "Server listening")
+  with the same settings plus `workDir`, `ffmpegPath` and `ffprobePath`.
+  `GET /config` leaves those paths out: server paths never reach clients.
+  With a key set, `/config` needs it too.
+- Tests: `server/index.test.ts` (no key by default, 401 for missing/wrong
+  key without encoding, right key, `/config` redaction, `/health` open,
+  preflight + CORS on 401) and `main.test.ts` (`AUTH_KEY` from env, config
+  log line redacted).
+
+### 13a. Local env file and the web demo's key
+
+Chosen: the key from the dev env plus an expert-mode field; `fetch`-based
+SSE; `CORS_ORIGINS=*` for local dev.
+
+- **`.env.local`** (repo root, gitignored by `.env.*`; copy it from the committed `.env.example`): `AUTH_KEY` (random)
+  and `CORS_ORIGINS=*`. `npm run dev:server` loads it with Node's own
+  `--env-file-if-exists` (works through tsx), so no dotenv dependency.
+  `*` rather than a localhost pattern: zero server code, any Vite port
+  works, and the key still guards the API.
+- **Where the page gets the key:** `vite.config.ts` reads `AUTH_KEY` from
+  that same file only under `vite dev` and defines `__DEV_API_KEY__`;
+  builds get `""`, so no key reaches the Pages bundle. Not a `VITE_*`
+  variable on purpose: Vite would compile any of those into a build.
+  Expert mode has an "API key" field next to the URL: **Connect** applies
+  both, **Reset** goes back to the defaults. It's kept in `localStorage`
+  (plain text; fine for a demo) only when it differs from the default.
+- **Adapter:** `createBackend(baseUrl, apiKey?)` sends
+  `Authorization: Bearer` on every request (fetch, the XHR upload, the
+  keepalive DELETE). `EventSource` can't send headers, so the job stream is
+  read with `fetch` + a small parser (`event:`/`data:` lines only, which is
+  all the server sends). Reconnects are ours now: retry every 1 s until
+  30 s after the drop, as before. A refused stream is final and its status
+  is known directly (404 expired, 401 unauthorized, a proxy's 502
+  unreachable), so the extra `GET /jobs/:id` to ask why is gone. The
+  preview already used a blob URL, so `<video>` needed no change.
+- **401** is a new error kind, `unauthorized`: "The server needs an API key.
+  Enter it in expert mode." Also shown instead of "Can't reach the demo
+  server" when loading presets is refused.
+- `npm run dev:web` now forwards arguments to Vite (`-- --port 5180`).
+- Tests: adapter (key on every request and none without it, 401 on upload
+  and stream, refused streams, reconnect then give up, abort while
+  waiting to reconnect, keep-alive comments), app state (key in
+  `urlChanged`, presets reload on a key change, the message). Checked by
+  hand in Chromium against the real server with `.env.local`: convert end
+  to end, wrong key → the message above, Reset → presets load again; the
+  production build doesn't contain the key.

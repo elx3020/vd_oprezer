@@ -1,7 +1,7 @@
 // Public API of the server module: createApp(config) builds the HTTP app
 // without listening or reading env, so tests can run it in-process.
 // main.ts reads env, listens and handles shutdown.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,6 +33,8 @@ export interface ServerConfig extends EngineConfig {
   logger?: FastifyServerOptions["logger"];
   /** Origins allowed to call the API from a browser; "*" allows any. Default: none, no CORS headers. */
   corsOrigins?: string[];
+  /** Clients must send `Authorization: Bearer <authKey>` (GET /health and CORS preflights excepted). Default: none, no auth. */
+  authKey?: string;
 }
 
 export function createApp(config: ServerConfig = {}): FastifyInstance {
@@ -44,6 +46,14 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
   const signal = config.signal ? AbortSignal.any([config.signal, stopped.signal]) : stopped.signal;
   const limiter = createLimiter(concurrency);
   const jobs = createJobs({ engine, limiter, dir: path.join(root, "jobs"), ttlMs: jobTtlMs, signal, log: app.log });
+
+  // GET /config shows these; server paths only go to the startup log, like everywhere else they never reach clients.
+  const { corsOrigins = [], authKey } = config;
+  const settings = { maxUploadBytes, concurrency, maxQueued, jobTtlMs, corsOrigins, authKey: authKey ? "***" : null };
+  app.addHook("onReady", (done) => {
+    app.log.info({ config: { ...settings, workDir, ffmpegPath: config.ffmpegPath ?? "ffmpeg", ffprobePath: config.ffprobePath ?? "ffprobe" } }, "config");
+    done();
+  });
 
   // Jobs live in memory, so files left by a previous run are orphans.
   // ponytail: jobs don't survive restarts; to add that, save Job records and reload them here instead of wiping.
@@ -59,7 +69,6 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     await rm(root, { recursive: true, force: true });
   });
 
-  const { corsOrigins = [] } = config;
   if (corsOrigins.length) {
     const any = corsOrigins.includes("*");
     app.addHook("onRequest", (req, reply, done) => {
@@ -71,12 +80,26 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
       if (!any) res.setHeader("vary", "Origin");
       if (req.method === "OPTIONS") {
         res.setHeader("access-control-allow-methods", "GET, POST, DELETE");
+        res.setHeader("access-control-allow-headers", "authorization");
         res.setHeader("access-control-max-age", "86400");
       }
       done();
     });
     // Preflights (DELETE, and POST with upload progress); Fastify has no OPTIONS routes otherwise.
     app.options("*", (_req, reply) => reply.status(204).send());
+  }
+
+  // After the CORS hook, so a 401 still carries CORS headers and the page can read it.
+  if (authKey) {
+    // Comparing fixed-length hashes keeps timingSafeEqual from leaking the key's length.
+    const hash = (s: string) => createHash("sha256").update(s).digest();
+    const expected = hash(`Bearer ${authKey}`);
+    app.addHook("onRequest", (req, reply, done) => {
+      // Browsers send preflights without credentials; the Docker HEALTHCHECK has no key.
+      if (req.method === "OPTIONS" || req.url === "/health") return done();
+      if (timingSafeEqual(hash(req.headers.authorization ?? ""), expected)) return done();
+      void reply.status(401).header("www-authenticate", "Bearer").send({ error: "UNAUTHORIZED", message: "Missing or wrong key: send Authorization: Bearer <key>." });
+    });
   }
 
   void app.register(multipart, {
@@ -138,6 +161,8 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
   app.get("/health", async () => engine.versions());
 
   app.get("/presets", () => PRESETS);
+
+  app.get("/config", () => settings);
 
   // Synchronous: upload, wait for the encode (queued like jobs), get the MP4 back.
   app.post("/convert", async (req, reply) => {

@@ -1,5 +1,5 @@
-// The adapter against fakes of the three browser APIs it uses (XMLHttpRequest,
-// EventSource, fetch), installed on globalThis: no injection in production code.
+// The adapter against fakes of the two browser APIs it uses (XMLHttpRequest,
+// fetch), installed on globalThis: no injection in production code.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { BackendError, type ConvertEvents, type ErrorKind, type LogEntry, type Phase } from "../backend.js";
@@ -7,6 +7,7 @@ import { createBackend, kindFor } from "./vd-oprezer.js";
 
 const BASE = "https://h.example/api";
 const ID = "9f1c";
+const KEY = "s3cret";
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const job = (fields: Record<string, unknown> = {}) => ({ id: ID, status: "queued", filename: "clip-web.mp4", progress: 0, createdAt: "t", ...fields });
 
@@ -18,6 +19,7 @@ class FakeXHR {
   aborted = false;
   status = 0;
   responseText = "";
+  headers: Record<string, string> = {};
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
@@ -26,6 +28,9 @@ class FakeXHR {
   open(method: string, url: string) {
     this.method = method;
     this.url = url;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.headers[name.toLowerCase()] = value;
   }
   send(body: unknown) {
     this.body = body;
@@ -49,56 +54,59 @@ class FakeXHR {
   }
 }
 
-class FakeEventSource {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSED = 2;
-  static last: FakeEventSource | undefined;
-  readyState = FakeEventSource.CONNECTING;
-  closed = false;
-  private listeners = new Map<string, ((e: { data?: string }) => void)[]>();
+/** A text/event-stream body the test writes to. Like real fetch, aborting the request's signal errors it. */
+class FakeStream {
+  static all: FakeStream[] = [];
+  private cancelled = false;
+  private controller!: ReadableStreamDefaultController<Uint8Array>;
+  readonly response: Response;
 
-  constructor(readonly url: string) {
-    FakeEventSource.last = this;
+  constructor(readonly init?: RequestInit) {
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        this.controller = controller;
+      },
+      cancel: () => {
+        this.cancelled = true;
+      },
+    });
+    const signal = init?.signal;
+    signal?.addEventListener("abort", () => this.controller.error(signal.reason), { once: true });
+    this.response = new Response(body, { headers: { "content-type": "text/event-stream" } });
+    FakeStream.all.push(this);
   }
-  addEventListener(type: string, listener: (e: { data?: string }) => void) {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-  }
-  close() {
-    this.closed = true;
-    this.readyState = FakeEventSource.CLOSED;
+  /** The adapter is done with it: it cancelled the body or aborted the request. */
+  get closed() {
+    return this.cancelled || Boolean(this.init?.signal?.aborted);
   }
   // Test controls:
-  emit(type: string, data?: unknown) {
-    if (type === "open") this.readyState = FakeEventSource.OPEN;
-    for (const listener of this.listeners.get(type) ?? []) listener({ data: data === undefined ? undefined : JSON.stringify(data) });
+  emit(type: string, data: unknown) {
+    this.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   }
-  /** Connection dropped: EventSource retries by itself. */
-  drop() {
-    this.readyState = FakeEventSource.CONNECTING;
-    this.emit("error");
+  write(text: string) {
+    this.controller.enqueue(new TextEncoder().encode(text));
   }
-  /** Non-200 answer (404): EventSource gives up for good. */
-  gone() {
-    this.readyState = FakeEventSource.CLOSED;
-    this.emit("error");
+  /** The server (shutting down) or a proxy (timeout) ended the stream before the job finished. */
+  end() {
+    this.controller.close();
   }
 }
 
 let calls: { method: string; url: string; init?: RequestInit }[];
-let routes: Map<string, () => Response>;
-const originals = { XMLHttpRequest: globalThis.XMLHttpRequest, EventSource: globalThis.EventSource, fetch: globalThis.fetch };
+let routes: Map<string, (init?: RequestInit) => Response>;
+const originals = { XMLHttpRequest: globalThis.XMLHttpRequest, fetch: globalThis.fetch };
+const EVENTS = `GET ${BASE}/jobs/${ID}/events`;
 
 beforeEach(() => {
   calls = [];
-  routes = new Map([
+  routes = new Map<string, (init?: RequestInit) => Response>([
     [`GET ${BASE}/jobs/${ID}/output`, () => new Response("abcd")],
     [`DELETE ${BASE}/jobs/${ID}`, () => new Response(null, { status: 204 })],
+    [EVENTS, (init) => new FakeStream(init).response],
   ]);
   FakeXHR.last = undefined;
-  FakeEventSource.last = undefined;
+  FakeStream.all = [];
   globalThis.XMLHttpRequest = FakeXHR as unknown as typeof XMLHttpRequest;
-  globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const url = String(input);
@@ -106,18 +114,18 @@ beforeEach(() => {
     if (init?.signal?.aborted) throw init.signal.reason;
     const route = routes.get(`${method} ${url}`);
     if (!route) throw new TypeError("fetch failed");
-    return route();
+    return route(init);
   };
 });
 
 afterEach(() => Object.assign(globalThis, originals));
 
 /** Starts a conversion; the result promise is pre-handled so a rejection waits for its assert. */
-function start(signal = new AbortController().signal) {
+function start(signal = new AbortController().signal, key?: string) {
   const phases: [Phase, number | undefined][] = [];
   const logs: LogEntry[] = [];
   const events: ConvertEvents = { progress: (phase, fraction) => phases.push([phase, fraction]), log: (entry) => logs.push(entry) };
-  const result = createBackend(`${BASE}/`).convert(new File(["video"], "clip.mov"), "web", events, signal);
+  const result = createBackend(`${BASE}/`, key).convert(new File(["video"], "clip.mov"), "web", events, signal);
   result.catch(() => {});
   return { result, phases, logs };
 }
@@ -127,7 +135,7 @@ async function toStream(signal?: AbortSignal) {
   const run = start(signal);
   FakeXHR.last!.respond(202, JSON.stringify(job()));
   await tick();
-  return { ...run, stream: FakeEventSource.last! };
+  return { ...run, stream: FakeStream.all.at(-1)! };
 }
 
 const kind = (expected: ErrorKind, message?: string) => (error: unknown) =>
@@ -162,6 +170,7 @@ describe("kindFor", () => {
     assert.equal(kindFor(400), "rejected");
     assert.equal(kindFor(404), "expired");
     for (const status of [0, 502, 504]) assert.equal(kindFor(status), "unreachable");
+    assert.equal(kindFor(401), "unauthorized");
     assert.equal(kindFor(500), "failed");
   });
 });
@@ -180,9 +189,9 @@ describe("convert", () => {
     xhr.progress(5, 10);
     xhr.respond(202, JSON.stringify(job()));
     await tick();
-    const stream = FakeEventSource.last!;
-    assert.equal(stream.url, `${BASE}/jobs/${ID}/events`);
-    stream.emit("open");
+    const stream = FakeStream.all.at(-1)!;
+    assert.ok(calls.some((c) => `${c.method} ${c.url}` === EVENTS));
+    stream.write(": keep-alive\n\n");
     stream.emit("job", job());
     stream.emit("job", job({ status: "running", progress: 50 }));
     stream.emit("job", job({ status: "done", progress: 100, sizeBytes: 4 }));
@@ -190,6 +199,7 @@ describe("convert", () => {
     const { blob, filename } = await result;
     assert.equal(blob.size, 4);
     assert.equal(filename, "clip-web.mp4");
+    await tick();
     assert.equal(stream.closed, true);
     assert.deepEqual(phases, [
       ["uploading", 0.5],
@@ -220,15 +230,20 @@ describe("convert", () => {
     await assert.rejects(run.result, kind("busy"));
 
     run = start();
+    FakeXHR.last!.respond(401, JSON.stringify({ error: "UNAUTHORIZED", message: "Missing or wrong key." }));
+    await assert.rejects(run.result, kind("unauthorized"));
+
+    run = start();
     FakeXHR.last!.fail();
     await assert.rejects(run.result, kind("unreachable"));
-    assert.equal(FakeEventSource.last, undefined);
+    assert.equal(FakeStream.all.length, 0);
   });
 
-  it("maps a failed job, a rejected input, a deleted job and a 404 stream", async () => {
+  it("maps a failed job, a rejected input and a deleted job", async () => {
     let run = await toStream();
     run.stream.emit("job", job({ status: "failed", error: { code: "FFMPEG_FAILED", message: "Encoding failed." } }));
     await assert.rejects(run.result, kind("failed"));
+    await tick();
     assert.equal(run.stream.closed, true);
 
     // Jobs probe the upload after the 202, so an unreadable file arrives as a job error, not a 422.
@@ -244,22 +259,22 @@ describe("convert", () => {
     run = await toStream();
     run.stream.emit("deleted", { id: ID });
     await assert.rejects(run.result, kind("expired"));
-    assert.equal(run.stream.closed, true);
-
-    routes.set(`GET ${BASE}/jobs/${ID}`, () => Response.json({ error: "NOT_FOUND", message: "No such job (finished jobs expire)." }, { status: 404 }));
-    run = await toStream();
-    run.stream.gone();
-    await assert.rejects(run.result, kind("expired"));
+    await tick();
     assert.equal(run.stream.closed, true);
   });
 
-  it("a refused stream asks the job why: a proxy's 502 means unreachable, not expired", async () => {
-    routes.set(`GET ${BASE}/jobs/${ID}`, () => new Response("<html>Bad Gateway</html>", { status: 502 }));
-    const run = await toStream();
-    run.stream.gone();
-    await assert.rejects(run.result, kind("unreachable", "HTTP 502"));
-    assert.equal(run.stream.closed, true);
-    assert.ok(run.logs.some((l) => l.label === `GET /jobs/${ID}` && l.status === 502));
+  it("a refused stream is final: 404 expired, 401 unauthorized, a proxy's 502 unreachable (job deleted)", async () => {
+    const refused = async (response: () => Response, expected: ErrorKind) => {
+      routes.set(EVENTS, response);
+      const run = start();
+      FakeXHR.last!.respond(202, JSON.stringify(job()));
+      await assert.rejects(run.result, kind(expected));
+      assert.ok(run.logs.some((l) => l.label === `GET /jobs/${ID}/events` && l.status === response().status));
+    };
+    await refused(() => Response.json({ error: "NOT_FOUND", message: "No such job (finished jobs expire)." }, { status: 404 }), "expired");
+    await refused(() => Response.json({ error: "UNAUTHORIZED", message: "Missing or wrong key." }, { status: 401 }), "unauthorized");
+    assert.equal(deleted(), false);
+    await refused(() => new Response("<html>Bad Gateway</html>", { status: 502 }), "unreachable");
     assert.equal(deleted(), true);
   });
 
@@ -279,30 +294,41 @@ describe("convert", () => {
     assert.equal(deleted(), true);
   });
 
-  it("waits for a dropped stream to reconnect; 30 s without reconnecting → unreachable + DELETE", async (t) => {
-    t.mock.timers.enable({ apis: ["setTimeout"] });
+  it("reconnects a dropped stream; 30 s without a connection → unreachable + DELETE", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
     const run = await toStream();
     let settled = false;
     run.result.then(
       () => (settled = true),
       () => (settled = true),
     );
+    const wait = async (ms: number) => {
+      for (let i = 0; i < ms / 1000; i++) {
+        t.mock.timers.tick(1000);
+        await tick();
+      }
+    };
 
-    run.stream.drop();
-    t.mock.timers.tick(29_000);
-    run.stream.emit("open"); // reconnected in time
-    t.mock.timers.tick(5_000);
+    run.stream.end(); // e.g. a proxy timeout
     await tick();
+    await wait(1000);
+    assert.equal(FakeStream.all.length, 2, "reconnected");
+    FakeStream.all[1]!.emit("job", job({ status: "running", progress: 10 }));
+    await tick();
+    assert.deepEqual(run.phases.at(-1), ["converting", 0.1]);
+
+    routes.delete(EVENTS); // the server is gone: every reconnect fails
+    FakeStream.all[1]!.end();
+    await tick();
+    await wait(29_000);
     assert.equal(settled, false);
-
-    run.stream.drop();
-    t.mock.timers.tick(20_000);
-    run.stream.drop(); // another failed retry doesn't restart the clock
-    t.mock.timers.tick(10_000);
-    await tick();
-    assert.equal(settled, true, "gives up 30 s after the first drop");
+    await wait(1000);
+    assert.equal(settled, true, "gives up 30 s after the drop");
     await assert.rejects(run.result, kind("unreachable"));
-    assert.equal(run.stream.closed, true);
+    assert.deepEqual(
+      run.logs.filter((l) => l.label.startsWith("stream")).map((l) => l.label),
+      ["stream reconnecting", "stream reconnecting", "stream lost"],
+    );
     assert.equal(deleted(), true);
   });
 
@@ -322,6 +348,47 @@ describe("convert", () => {
     await assert.rejects(run.result, { name: "AbortError" });
     assert.equal(run.stream.closed, true);
     assert.equal(deleted(), true);
+  });
+
+  it("abort while waiting to reconnect: stops retrying and deletes the job", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const controller = new AbortController();
+    const run = await toStream(controller.signal);
+    run.stream.end();
+    await tick();
+    controller.abort();
+    await assert.rejects(run.result, { name: "AbortError" });
+    t.mock.timers.tick(5_000);
+    await tick();
+    assert.equal(FakeStream.all.length, 1, "no reconnect after the abort");
+    assert.equal(deleted(), true);
+  });
+
+  it("sends the key on every request when it has one, and none otherwise", async () => {
+    const auth = (headers?: HeadersInit) => new Headers(headers).get("authorization");
+    routes.set(`GET ${BASE}/presets`, () => Response.json({}));
+    await createBackend(BASE, KEY).presets();
+    assert.equal(auth(calls[0]?.init?.headers), `Bearer ${KEY}`);
+
+    const { result } = start(undefined, KEY);
+    assert.equal(FakeXHR.last!.headers.authorization, `Bearer ${KEY}`);
+    FakeXHR.last!.respond(202, JSON.stringify(job()));
+    await tick();
+    FakeStream.all[0]!.emit("job", job({ status: "done", progress: 100, sizeBytes: 4 }));
+    await result;
+    await tick();
+    const sent = calls.slice(1).map((c) => [`${c.method} ${c.url.slice(BASE.length)}`, auth(c.init?.headers)]);
+    assert.deepEqual(sent, [
+      [`GET /jobs/${ID}/events`, `Bearer ${KEY}`],
+      [`GET /jobs/${ID}/output`, `Bearer ${KEY}`],
+      [`DELETE /jobs/${ID}`, `Bearer ${KEY}`],
+    ]);
+
+    calls = [];
+    await createBackend(BASE).presets();
+    assert.equal(auth(calls[0]?.init?.headers), null);
+    start();
+    assert.deepEqual(FakeXHR.last!.headers, {});
   });
 
   it("rejects at once when already aborted", async () => {

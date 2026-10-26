@@ -30,7 +30,7 @@ export interface Backend {
 }
 
 /** For "rejected", message is written for visitors and shown as is. */
-export type ErrorKind = "too_large" | "busy" | "unsupported" | "rejected" | "failed" | "expired" | "unreachable";
+export type ErrorKind = "too_large" | "busy" | "unsupported" | "rejected" | "failed" | "expired" | "unreachable" | "unauthorized";
 
 export class BackendError extends Error {
   constructor(
@@ -41,4 +41,5 @@ export class BackendError extends Error {
   }
 }
 
-export type CreateBackend = (baseUrl: string) => Backend;
+/** apiKey: sent with every request when the backend needs one. */
+export type CreateBackend = (baseUrl: string, apiKey?: string) => Backend;

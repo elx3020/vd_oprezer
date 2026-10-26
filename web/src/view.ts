@@ -14,7 +14,7 @@ export interface Handlers {
   tryAgain(): void;
   another(): void;
   expert(): void;
-  url(value: string): void;
+  url(value: string, key: string): void;
   resetUrl(): void;
   videoInfo(width: number, height: number, durationS: number): void;
 }
@@ -59,6 +59,7 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
     logPanel: $("log-panel"),
     urlForm: $<HTMLFormElement>("url-form"),
     url: $<HTMLInputElement>("url"),
+    key: $<HTMLInputElement>("key"),
     connect: $<HTMLButtonElement>("connect"),
     resetUrl: $<HTMLButtonElement>("reset-url"),
     log: $<HTMLOListElement>("log"),
@@ -88,7 +89,7 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
   el.tryAgain.addEventListener("click", () => handlers.tryAgain());
   el.urlForm.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (el.url.reportValidity()) handlers.url(el.url.value.trim());
+    if (el.url.reportValidity()) handlers.url(el.url.value.trim(), el.key.value.trim());
   });
   el.resetUrl.addEventListener("click", () => handlers.resetUrl());
   el.video.addEventListener("loadedmetadata", () => handlers.videoInfo(el.video.videoWidth, el.video.videoHeight, el.video.duration));
@@ -99,6 +100,7 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
   let shownPresets: State["presets"] | undefined;
   let shownLog = 0;
   let shownUrl: string | undefined;
+  let shownKey: string | undefined;
   let shownVideo: string | undefined;
   let shownStatus = "";
 
@@ -118,6 +120,7 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
       el.presets.replaceChildren(...presetRows(doc, state.presets));
       el.presetsError.hidden = state.presets === "loading" || Array.isArray(state.presets);
       el.presets.hidden = !el.presetsError.hidden;
+      if (!el.presetsError.hidden) el.presetsError.textContent = presetsError(state.presets);
     }
     for (const input of el.presets.querySelectorAll("input")) {
       input.checked = input.value === state.presetId;
@@ -161,10 +164,14 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
     const announce = running ? PHASE_TEXT[status.name as Phase] : status.name === "done" ? `Done. ${el.summary.textContent}` : status.name === "failed" ? el.failureText.textContent : "";
     if (announce !== shownStatus) el.status.textContent = shownStatus = announce ?? "";
 
-    el.url.disabled = el.connect.disabled = el.resetUrl.disabled = running;
+    el.url.disabled = el.key.disabled = el.connect.disabled = el.resetUrl.disabled = running;
     if (state.backendUrl !== shownUrl) {
       shownUrl = state.backendUrl;
       el.url.value = state.backendUrl;
+    }
+    if (state.apiKey !== shownKey) {
+      shownKey = state.apiKey;
+      el.key.value = state.apiKey;
     }
 
     if (state.log.length > shownLog) {
@@ -173,6 +180,11 @@ export function mountView(doc: Document, handlers: Handlers, opts: { maxUploadMb
       el.log.scrollTop = el.log.scrollHeight;
     }
   };
+}
+
+function presetsError(presets: State["presets"]): string {
+  const kind = typeof presets === "object" && "kind" in presets ? presets.kind : undefined;
+  return kind === "unauthorized" ? messageFor(kind, "") : "Can't reach the demo server. Reload the page to try again.";
 }
 
 function presetRows(doc: Document, presets: State["presets"]): HTMLElement[] {

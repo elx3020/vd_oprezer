@@ -12,31 +12,22 @@ backends only over HTTP, through an adapter. Design and reasoning:
 
 ## Run it against a local server
 
-The server needs to allow the page's origin (CORS is off by default).
+The server needs to allow the page's origin (CORS is off by default), and
+the page needs the server's key if it has one. A gitignored `.env.local` at
+the repo root covers both. From the repo root (Bash or PowerShell):
 
-Bash:
-
-```bash
-# repo root
-CORS_ORIGINS=http://localhost:5173 npm run dev:server
-# web/
-npm install
-npm run dev            # http://localhost:5173
+```
+cp .env.example .env.local # once, then set AUTH_KEY to a random string
+npm --prefix web install   # once
+npm run dev:server         # loads .env.local
+npm run dev:web            # http://localhost:5173; vite dev reads AUTH_KEY from the same file
 ```
 
-PowerShell:
-
-```powershell
-# repo root
-$env:CORS_ORIGINS='http://localhost:5173'; npm run dev:server
-# web/
-npm install
-npm run dev
-```
-
-The page uses `http://localhost:3000` unless `VITE_BACKEND_URL` says
-otherwise. You can also change the URL in expert mode, and the browser
-remembers it.
+`npm run dev:web -- --port 5180` passes options to Vite. The page uses
+`http://localhost:3000` unless `VITE_BACKEND_URL` says otherwise. Expert
+mode lets you change the URL and the API key; the browser remembers both
+(the key in `localStorage`, in plain text), and **Reset** goes back to the
+defaults.
 
 ```
 npm run check          # typecheck + tests + build (must pass)
@@ -52,6 +43,10 @@ Read at build time (Vite env):
 |---|---|
 | `VITE_BACKEND_URL` | Default backend URL. Default: `http://localhost:3000` |
 | `VITE_MAX_UPLOAD_MB` | Optional. The backend's upload limit: the page shows it and refuses bigger files before uploading |
+
+There is deliberately no build setting for the API key: anything in a static
+build is public. Only `vite dev` fills in a default key (`AUTH_KEY` from the
+repo root's `.env.local`, see `vite.config.ts`); builds start with none.
 
 ## Connecting another backend
 
@@ -82,6 +77,6 @@ deploys on pushes to `main`. One-time setup:
    Serve it over **https**: browsers block calls from an https page to a
    plain-http remote server.
 
-Suggested limits for a public demo server (anyone can upload; there is no
-auth): `MAX_UPLOAD_MB=100`, `MAX_QUEUED=5`, `JOB_TTL_MIN=15`, `CONCURRENCY=1`.
+Suggested limits for a public demo server (leave `AUTH_KEY` unset so
+visitors can use it; anyone can then upload): `MAX_UPLOAD_MB=100`, `MAX_QUEUED=5`, `JOB_TTL_MIN=15`, `CONCURRENCY=1`.
 Set `DEMO_MAX_UPLOAD_MB` to the same value as `MAX_UPLOAD_MB`.

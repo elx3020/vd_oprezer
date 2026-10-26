@@ -9,6 +9,7 @@ import { BackendError, type ConvertEvents, type LogEntry } from "./backend.js";
 import { mountView } from "./view.js";
 
 const defaultUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
+const defaultKey = __DEV_API_KEY__;
 const maxUploadMb = Number(import.meta.env.VITE_MAX_UPLOAD_MB) || undefined;
 
 // Storage can be missing or throw (private windows, blocked site data): the page works without it.
@@ -30,8 +31,9 @@ const storage = {
   },
 };
 
-let state: State = initialState(storage.get("vd-demo:url") ?? defaultUrl, storage.get("vd-demo:expert") === "1");
-let backend = createBackend(state.backendUrl);
+// ponytail: the key sits in localStorage in plain text, fine for a demo; a shared machine would want sessionStorage.
+let state: State = initialState(storage.get("vd-demo:url") ?? defaultUrl, storage.get("vd-demo:expert") === "1", storage.get("vd-demo:key") ?? defaultKey);
+let backend = createBackend(state.backendUrl, state.apiKey || undefined);
 let controller: AbortController | undefined;
 let objectUrl: string | undefined;
 
@@ -52,8 +54,9 @@ async function loadPresets() {
   } catch (error) {
     if (current !== backend) return;
     const message = (error as Error).message;
-    log({ label: "presets failed", status: error instanceof BackendError ? error.kind : undefined, data: message });
-    dispatch({ type: "presetsFailed", error: message });
+    const kind = error instanceof BackendError ? error.kind : undefined;
+    log({ label: "presets failed", status: kind, data: message });
+    dispatch({ type: "presetsFailed", error: message, kind });
   }
 }
 
@@ -83,9 +86,10 @@ async function convert() {
 function dispatch(action: Action) {
   const before = state;
   state = reduce(state, action);
-  if (state.backendUrl !== before.backendUrl) {
+  if (state.backendUrl !== before.backendUrl || state.apiKey !== before.apiKey) {
     storage.set("vd-demo:url", state.backendUrl === defaultUrl ? null : state.backendUrl);
-    backend = createBackend(state.backendUrl);
+    storage.set("vd-demo:key", state.apiKey === defaultKey ? null : state.apiKey);
+    backend = createBackend(state.backendUrl, state.apiKey || undefined);
   }
   if (state.expert !== before.expert) storage.set("vd-demo:expert", state.expert ? "1" : null);
   if (shouldLoadPresets(before, state)) void loadPresets();
@@ -108,8 +112,8 @@ const render = mountView(
       dispatch({ type: "another" });
     },
     expert: () => dispatch({ type: "expertToggled" }),
-    url: (value) => dispatch({ type: "urlChanged", url: value }),
-    resetUrl: () => dispatch({ type: "urlChanged", url: defaultUrl }),
+    url: (value, key) => dispatch({ type: "urlChanged", url: value, key }),
+    resetUrl: () => dispatch({ type: "urlChanged", url: defaultUrl, key: defaultKey }),
     videoInfo: (width, height, durationS) => log({ label: `result ${width}×${height}, ${durationS.toFixed(1)} s` }),
   },
   { maxUploadMb, defaultUrl },

@@ -31,6 +31,7 @@ describe("messageFor", () => {
     assert.equal(messageFor("failed", "x"), "The conversion failed.");
     assert.equal(messageFor("expired", "x"), "The result expired on the server. Please convert again.");
     assert.equal(messageFor("unreachable", "x"), "Can't reach the demo server.");
+    assert.equal(messageFor("unauthorized", "x"), "The server needs an API key. Enter it in expert mode.");
   });
 });
 
@@ -41,6 +42,8 @@ describe("reduce", () => {
     assert.deepEqual(state.status, { name: "idle" });
     assert.deepEqual(state.log, []);
     assert.equal(state.expert, true);
+    assert.equal(state.apiKey, "");
+    assert.equal(initialState("http://localhost:3000", false, "k").apiKey, "k");
   });
 
   it("preselects the first preset; choosing a file then makes it ready", () => {
@@ -58,6 +61,7 @@ describe("reduce", () => {
 
   it("records a failed presets load", () => {
     assert.deepEqual(reduce(loaded, { type: "presetsFailed", error: "HTTP 502" }).presets, { error: "HTTP 502" });
+    assert.deepEqual(reduce(loaded, { type: "presetsFailed", error: "Missing key", kind: "unauthorized" }).presets, { error: "Missing key", kind: "unauthorized" });
   });
 
   it("runs: started → uploading 0, progress phases, finished → done", () => {
@@ -115,6 +119,15 @@ describe("reduce", () => {
     const changed = reduce(loaded, { type: "urlChanged", url: "https://demo.example/api/" });
     assert.equal(changed.backendUrl, "https://demo.example/api/");
     assert.equal(changed.presets, "loading");
+    assert.equal(changed.apiKey, "", "no key given: keeps the current one");
+  });
+
+  it("changes the API key with the URL (Connect, Reset) and reloads presets", () => {
+    const keyed = reduce(loaded, { type: "urlChanged", url: loaded.backendUrl, key: "k" });
+    assert.equal(keyed.apiKey, "k");
+    assert.equal(keyed.presets, "loading");
+    assert.equal(reduce(keyed, { type: "urlChanged", url: keyed.backendUrl }).apiKey, "k");
+    assert.equal(reduce(running, { type: "urlChanged", url: running.backendUrl, key: "k" }), running);
   });
 
   it("loads presets after a URL change, even while an earlier load is still running", () => {
@@ -122,6 +135,7 @@ describe("reduce", () => {
     assert.equal(shouldLoadPresets(starting, reduce(starting, { type: "urlChanged", url: "http://b.example" })), true);
     assert.equal(shouldLoadPresets(loaded, reduce(loaded, { type: "urlChanged", url: loaded.backendUrl })), true); // retry
     assert.equal(shouldLoadPresets(starting, reduce(starting, { type: "urlChanged", url: starting.backendUrl })), false);
+    assert.equal(shouldLoadPresets(starting, reduce(starting, { type: "urlChanged", url: starting.backendUrl, key: "k" })), true);
     assert.equal(shouldLoadPresets(loaded, reduce(loaded, { type: "expertToggled" })), false);
   });
 

@@ -15,8 +15,10 @@ export interface LogLine extends LogEntry {
 
 export interface State {
   backendUrl: string;
+  /** "" = none. */
+  apiKey: string;
   expert: boolean;
-  presets: Preset[] | "loading" | { error: string };
+  presets: Preset[] | "loading" | { error: string; kind?: ErrorKind };
   file?: File;
   presetId?: string;
   status: Status;
@@ -25,7 +27,7 @@ export interface State {
 
 export type Action =
   | { type: "presetsLoaded"; presets: Preset[] }
-  | { type: "presetsFailed"; error: string }
+  | { type: "presetsFailed"; error: string; kind?: ErrorKind }
   | { type: "fileChosen"; file: File }
   | { type: "presetChosen"; id: string }
   | { type: "started" }
@@ -37,12 +39,13 @@ export type Action =
   | { type: "another" }
   | { type: "log"; entry: LogEntry; at: number }
   | { type: "expertToggled" }
-  | { type: "urlChanged"; url: string };
+  /** key undefined = keep the current one. */
+  | { type: "urlChanged"; url: string; key?: string };
 
 const PHASES: readonly string[] = ["uploading", "queued", "converting", "downloading"] satisfies Phase[];
 
-export function initialState(backendUrl: string, expert: boolean): State {
-  return { backendUrl, expert, presets: "loading", status: { name: "idle" }, log: [] };
+export function initialState(backendUrl: string, expert: boolean, apiKey = ""): State {
+  return { backendUrl, apiKey, expert, presets: "loading", status: { name: "idle" }, log: [] };
 }
 
 export function isRunning(status: Status): boolean {
@@ -61,7 +64,7 @@ export function reduce(state: State, action: Action): State {
       return isWaiting(state) ? { ...next, status: waiting(next) } : next;
     }
     case "presetsFailed":
-      return { ...state, presets: { error: action.error } };
+      return { ...state, presets: action.kind ? { error: action.error, kind: action.kind } : { error: action.error } };
     case "fileChosen": {
       if (running) return state;
       const next = { ...state, file: action.file };
@@ -94,13 +97,13 @@ export function reduce(state: State, action: Action): State {
       return { ...state, expert: !state.expert };
     case "urlChanged":
       if (running || !isHttpUrl(action.url)) return state;
-      return { ...state, backendUrl: action.url, presets: "loading" };
+      return { ...state, backendUrl: action.url, apiKey: action.key ?? state.apiKey, presets: "loading" };
   }
 }
 
-/** After an action: does main need to fetch presets? Also when the URL changed while an earlier load was still running. */
+/** After an action: does main need to fetch presets? Also when the URL or key changed while an earlier load was still running. */
 export function shouldLoadPresets(before: State, after: State): boolean {
-  return after.presets === "loading" && (before.presets !== "loading" || after.backendUrl !== before.backendUrl);
+  return after.presets === "loading" && (before.presets !== "loading" || after.backendUrl !== before.backendUrl || after.apiKey !== before.apiKey);
 }
 
 const isWaiting = (state: State) => state.status.name === "idle" || state.status.name === "ready";
@@ -135,5 +138,7 @@ export function messageFor(kind: ErrorKind, message: string, maxUploadMb?: numbe
       return "The result expired on the server. Please convert again.";
     case "unreachable":
       return "Can't reach the demo server.";
+    case "unauthorized":
+      return "The server needs an API key. Enter it in expert mode.";
   }
 }

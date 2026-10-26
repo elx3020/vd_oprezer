@@ -522,3 +522,61 @@ describe("CORS", () => {
     assert.equal(acao(full), origin);
   });
 });
+
+describe("auth and GET /config", () => {
+  const key = "s3cret";
+  const bearer = (k: string) => ({ authorization: `Bearer ${k}` });
+
+  it("needs no key by default, and /config shows the settings without paths", async () => {
+    await start({ maxQueued: 5, corsOrigins: ["https://demo.example"] });
+    assert.equal((await fetch(`${base}/presets`)).status, 200);
+    assert.deepEqual(await (await fetch(`${base}/config`)).json(), {
+      maxUploadBytes: 2 * 1024 ** 3,
+      concurrency: 1,
+      maxQueued: 5,
+      jobTtlMs: 60 * 60_000,
+      corsOrigins: ["https://demo.example"],
+      authKey: null,
+    });
+  });
+
+  it("answers 401 without the key or with a wrong one, before reading the upload", async () => {
+    const runner = await start({ authKey: key });
+    for (const headers of [{}, bearer("wrong"), { authorization: key }]) {
+      const res = await fetch(`${base}/presets`, { headers });
+      assert.equal(res.status, 401);
+      assert.equal(res.headers.get("www-authenticate"), "Bearer");
+      assert.deepEqual(await res.json(), { error: "UNAUTHORIZED", message: "Missing or wrong key: send Authorization: Bearer <key>." });
+    }
+    assert.equal((await convert(form({}))).status, 401);
+    assert.equal((await fetch(`${base}/jobs`, { method: "POST", body: form({}) })).status, 401);
+    assert.equal(runner.mock.callCount(), 0);
+    await workDirEmpty();
+  });
+
+  it("accepts the right key; /config redacts it", async () => {
+    await start({ authKey: key });
+    assert.equal((await fetch(`${base}/presets`, { headers: bearer(key) })).status, 200);
+    assert.equal((await fetch(`${base}/config`)).status, 401);
+    const text = await (await fetch(`${base}/config`, { headers: bearer(key) })).text();
+    assert.equal((JSON.parse(text) as { authKey: string }).authKey, "***");
+    assert.ok(!text.includes(key));
+  });
+
+  it("keeps /health open for the Docker HEALTHCHECK", async () => {
+    await start({ authKey: key });
+    assert.equal((await fetch(`${base}/health`)).status, 200);
+  });
+
+  it("lets CORS preflights through (browsers send them without the key) and allows the Authorization header", async () => {
+    const origin = "https://demo.example";
+    await start({ authKey: key, corsOrigins: [origin] });
+    const preflight = await fetch(`${base}/jobs`, { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "authorization" } });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-headers"), "authorization");
+    // The 401 carries CORS headers too, so the page can read it.
+    const denied = await fetch(`${base}/presets`, { headers: { origin } });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.headers.get("access-control-allow-origin"), origin);
+  });
+});

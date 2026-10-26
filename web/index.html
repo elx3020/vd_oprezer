@@ -71,6 +71,10 @@
           <label for="url">Backend URL</label>
           <div class="url-row">
             <input id="url" type="url" required pattern="https?://.+" spellcheck="false" autocomplete="off" />
+          </div>
+          <label for="key">API key, if the server needs one</label>
+          <div class="url-row">
+            <input id="key" type="password" spellcheck="false" autocomplete="off" />
             <button type="submit" id="connect">Connect</button>
             <button type="button" id="reset-url">Reset</button>
           </div>

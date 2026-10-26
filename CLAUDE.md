@@ -25,7 +25,7 @@ Read before changing anything:
 
 ```
 npm run dev:cli -- <args>   # CLI from source (tsx, "source" condition)
-npm run dev:server          # server from source, watch mode (never exits)
+npm run dev:server          # server from source, watch mode (never exits); loads .env.local (AUTH_KEY, CORS_ORIGINS) if present
 npm test                    # node:test via tsx; FFmpeg tests skip if not on PATH
 npm run test:watch
 npm run check               # must pass before a change is done
@@ -33,7 +33,7 @@ npm run build               # tsc → dist/
 npm run bundle              # esbuild → dist-bundle/ (what the Docker image runs)
 docker build -t vd-oprezer .          # runtime image
 docker build --target test .          # npm run check on Linux with the image's FFmpeg
-npm run dev:web             # web demo (Vite), same as cd web && npm run dev; the server needs CORS_ORIGINS=http://localhost:5173
+npm run dev:web             # web demo (Vite); args after -- go to vite. Takes the key from .env.local, which also sets CORS
 cd web && npm run check     # web demo: typecheck + tests + build (separate package)
 ```
 

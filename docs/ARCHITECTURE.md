@@ -115,11 +115,20 @@ gets an AbortSignal combining server shutdown with client disconnect
 (`/convert`) or DELETE (jobs). 422/5xx messages are fixed texts, so FFmpeg
 output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
 `MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
-`CORS_ORIGINS`, `FFMPEG_PATH`, `FFPROBE_PATH`) and handles SIGINT/SIGTERM.
+`CORS_ORIGINS`, `AUTH_KEY`, `FFMPEG_PATH`, `FFPROBE_PATH`) and handles
+SIGINT/SIGTERM. `createApp` logs the effective config once at startup
+(`AUTH_KEY` shown as `***`) and serves it at `GET /config` without server
+paths.
 
 Opt-in CORS (`corsOrigins`, comma-separated `CORS_ORIGINS`, `*` for any):
 an `onRequest` hook sets the headers on `reply.raw` so the hijacked SSE
 route keeps them; an `OPTIONS *` route answers preflights. Off by default.
+
+Optional auth (`authKey`, `AUTH_KEY`): a second `onRequest` hook, after the
+CORS one, answers 401 `UNAUTHORIZED` unless the request has
+`Authorization: Bearer <key>` (constant-time compare). `GET /health` and
+`OPTIONS` stay open. Off by default. Never pass the key as a build arg: it
+would end up in the published image.
 
 `GET /jobs/:id/events` streams job changes as Server-Sent Events:
 `jobs.subscribe(id, listener)` reports each change. The stream ends when
@@ -138,10 +147,10 @@ from `src/` and talks to backends only over HTTP.
 | File | Role |
 |---|---|
 | `src/backend.ts` | The backend contract: `presets()`, `convert(file, presetId, events, signal)`, `BackendError` kinds |
-| `src/adapters/vd-oprezer.ts` | Maps the contract onto this server: XHR upload (progress), SSE job events, output download, DELETE |
+| `src/adapters/vd-oprezer.ts` | Maps the contract onto this server: XHR upload (progress), job events (SSE read with `fetch`, so it can send the key), output download, DELETE; `Authorization: Bearer` on all of them when there is a key |
 | `src/app.ts` | State and transitions, pure; visitor copy for each error kind |
 | `src/view.ts` | Updates the static markup in `index.html` in place |
-| `src/main.ts` | Composition root: build settings, `localStorage`, picks the adapter |
+| `src/main.ts` | Composition root: build settings, `localStorage` (URL, key, expert mode), picks the adapter |
 
 Another backend = another adapter + changing the import in `main.ts`. The
 server allows the page's origin with `CORS_ORIGINS`. Details:

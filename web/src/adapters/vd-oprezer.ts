@@ -1,5 +1,6 @@
-// Adapter for vd-oprezer's HTTP API (docs/DECISIONS.md, 6–8 and 11):
-// POST /jobs, GET /jobs/:id/events (SSE), GET /jobs/:id/output, DELETE /jobs/:id.
+// Adapter for vd-oprezer's HTTP API (docs/DECISIONS.md, 6–8, 11 and 13):
+// POST /jobs, GET /jobs/:id/events (SSE), GET /jobs/:id/output, DELETE /jobs/:id,
+// each with `Authorization: Bearer <key>` when there is a key.
 import { BackendError, type ConvertEvents, type CreateBackend, type ErrorKind } from "../backend.js";
 
 /** The server's Job, as far as this adapter reads it. */
@@ -17,9 +18,13 @@ const JOB_ERRORS: Record<string, ErrorKind> = { INVALID_ARGUMENT: "rejected", PR
 
 /** A dropped event stream that hasn't reconnected by then counts as lost. */
 const RECONNECT_MS = 30_000;
+/** Pause between reconnect attempts. */
+const RETRY_MS = 1_000;
 
 export function kindFor(status: number, code?: string): ErrorKind {
   switch (status) {
+    case 401:
+      return "unauthorized";
     case 413:
       return "too_large";
     case 503:
@@ -57,15 +62,57 @@ function httpError(status: number, text: string): BackendError {
 
 const since = (start: number) => Math.round(performance.now() - start);
 
+/** setTimeout as a promise that rejects with the signal's reason on abort. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** The messages of a text/event-stream body, until it ends. Only the fields the server sends: event and data. */
+async function* messages(body: ReadableStream<Uint8Array<ArrayBuffer>>): AsyncGenerator<{ event: string; data: string }> {
+  // getReader(), not for-await: Safari can't async-iterate streams.
+  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      buffer += next.value;
+      let end: number;
+      while ((end = buffer.indexOf("\n\n")) >= 0) {
+        let event = "message";
+        const data: string[] = [];
+        for (const line of buffer.slice(0, end).split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+        }
+        buffer = buffer.slice(end + 2);
+        if (data.length) yield { event, data: data.join("\n") }; // comment-only blocks (keep-alives) have no data
+      }
+    }
+  } finally {
+    // Stopped early (done, failed, deleted): close the connection instead of leaving it to the server.
+    reader.cancel().catch(() => {});
+  }
+}
+
 /** "instagram-reel" → "Instagram reel" */
 function label(id: string): string {
   const words = id.replaceAll("-", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-export const createBackend: CreateBackend = (baseUrl) => {
+export const createBackend: CreateBackend = (baseUrl, apiKey) => {
   // Joined as strings, not new URL(path, base), so a path prefix (https://host/api/) survives.
   const url = (path: string) => baseUrl.replace(/\/+$/, "") + path;
+  const headers: Record<string, string> = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
 
   /** fetch that turns network errors and non-2xx answers into BackendErrors, logging failures. */
   async function request(path: string, init: RequestInit = {}, events?: ConvertEvents): Promise<Response> {
@@ -73,7 +120,7 @@ export const createBackend: CreateBackend = (baseUrl) => {
     const start = performance.now();
     let res: Response;
     try {
-      res = await fetch(url(path), init);
+      res = await fetch(url(path), { ...init, headers });
     } catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
       events?.log({ label: `${method} ${path}`, status: "network error", ms: since(start) });
@@ -117,62 +164,65 @@ export const createBackend: CreateBackend = (baseUrl) => {
         reject(signal.reason);
       };
       xhr.open("POST", url("/jobs"));
+      for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
       xhr.send(body);
     });
   }
 
-  /** Follows the job's event stream until it's done; rejects if it fails, disappears or the stream is lost. */
-  function watch(id: string, events: ConvertEvents, signal: AbortSignal): Promise<Job> {
-    return new Promise((resolve, reject) => {
-      const source = new EventSource(url(`/jobs/${id}/events`));
-      let lost: ReturnType<typeof setTimeout> | undefined;
-      // Always close: EventSource reconnects whenever a stream ends.
-      const end = (finish: () => void) => {
-        source.close();
-        clearTimeout(lost);
-        signal.removeEventListener("abort", onAbort);
-        finish();
-      };
-      const onAbort = () => end(() => reject(signal.reason));
-      signal.addEventListener("abort", onAbort, { once: true });
-
-      source.addEventListener("job", (e) => {
-        const job = JSON.parse(e.data as string) as Job;
-        events.log({ label: `job ${job.status}${job.status === "running" ? ` ${job.progress}%` : ""}`, data: job });
-        if (job.status === "queued") events.progress("queued");
-        else if (job.status === "running") events.progress("converting", job.progress / 100);
-        else if (job.status === "done") end(() => resolve(job));
-        else end(() => reject(new BackendError(JOB_ERRORS[job.error?.code ?? ""] ?? "failed", job.error?.message ?? "The job failed.")));
-      });
-      source.addEventListener("deleted", () => {
-        events.log({ label: "job deleted" });
-        end(() => reject(new BackendError("expired", "The job was deleted on the server.")));
-      });
-      source.addEventListener("open", () => {
-        clearTimeout(lost);
-        lost = undefined;
-      });
-      source.addEventListener("error", () => {
-        // CLOSED: a non-200 answer, and EventSource gave up. It doesn't say which status, so ask
-        // the job: 404 = gone (expired), 502/504 = a proxy with the server down (unreachable).
-        if (source.readyState === EventSource.CLOSED) {
-          events.log({ label: "stream refused" });
-          void request(`/jobs/${id}`, { signal }, events).then(
-            () => end(() => reject(new BackendError("failed", "The server refused the progress stream."))),
-            (error: unknown) => end(() => reject(error)),
-          );
-          return;
+  /**
+   * Follows the job's event stream until it's done; rejects if it fails, disappears or the stream is lost.
+   * fetch, not EventSource: EventSource can't send the Authorization header.
+   */
+  async function watch(id: string, events: ConvertEvents, signal: AbortSignal): Promise<Job> {
+    const path = `/jobs/${id}/events`;
+    let droppedAt: number | undefined;
+    for (;;) {
+      let res: Response | undefined;
+      try {
+        res = await fetch(url(path), { headers, signal });
+      } catch {
+        if (signal.aborted) throw signal.reason;
+      }
+      // Refused (404 expired, 401, a proxy's 502 with the server down): final, no retry.
+      if (res && !res.ok) {
+        const text = await res.text();
+        events.log({ label: `GET ${path}`, status: res.status, data: parse(text) ?? text });
+        throw httpError(res.status, text);
+      }
+      if (res?.body) {
+        droppedAt = undefined;
+        try {
+          for await (const { event, data } of messages(res.body)) {
+            if (event === "deleted") {
+              events.log({ label: "job deleted" });
+              throw new BackendError("expired", "The job was deleted on the server.");
+            }
+            if (event !== "job") continue;
+            const job = JSON.parse(data) as Job;
+            events.log({ label: `job ${job.status}${job.status === "running" ? ` ${job.progress}%` : ""}`, data: job });
+            if (job.status === "queued") events.progress("queued");
+            else if (job.status === "running") events.progress("converting", job.progress / 100);
+            else if (job.status === "done") return job;
+            else throw new BackendError(JOB_ERRORS[job.error?.code ?? ""] ?? "failed", job.error?.message ?? "The job failed.");
+          }
+        } catch (error) {
+          if (signal.aborted) throw signal.reason;
+          if (error instanceof BackendError) throw error;
+          // Anything else is a dropped connection: retry below.
         }
-        // CONNECTING: dropped, and EventSource retries by itself. Not a plain idle timer:
-        // a queued job gets no events while it waits.
-        if (lost !== undefined) return;
+      }
+      // Dropped: a network error, or the stream ended before the job did (server restart, proxy
+      // timeout). Retry until RECONNECT_MS after the drop. Not an idle timer: a queued job gets
+      // no events while it waits.
+      if (droppedAt === undefined) {
+        droppedAt = Date.now();
         events.log({ label: "stream reconnecting" });
-        lost = setTimeout(() => {
-          events.log({ label: "stream lost" });
-          end(() => reject(new BackendError("unreachable", "Lost the connection to the server.")));
-        }, RECONNECT_MS);
-      });
-    });
+      } else if (Date.now() - droppedAt >= RECONNECT_MS) {
+        events.log({ label: "stream lost" });
+        throw new BackendError("unreachable", "Lost the connection to the server.");
+      }
+      await sleep(RETRY_MS, signal);
+    }
   }
 
   async function download(job: Job, events: ConvertEvents, signal: AbortSignal): Promise<Blob> {
@@ -203,7 +253,7 @@ export const createBackend: CreateBackend = (baseUrl) => {
   function remove(id: string, events: ConvertEvents): void {
     const path = `/jobs/${id}`;
     // keepalive: still sent if the visitor closes the tab.
-    fetch(url(path), { method: "DELETE", keepalive: true }).then(
+    fetch(url(path), { method: "DELETE", headers, keepalive: true }).then(
       (res) => events.log({ label: `DELETE ${path}`, status: res.status }),
       () => events.log({ label: `DELETE ${path}`, status: "network error" }),
     );
