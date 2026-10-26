@@ -33,7 +33,7 @@ npm run build               # tsc → dist/
 npm run bundle              # esbuild → dist-bundle/ (what the Docker image runs)
 docker build -t vd-oprezer .          # runtime image
 docker build --target test .          # npm run check on Linux with the image's FFmpeg
-cd web && npm run dev       # web demo (Vite); the server needs CORS_ORIGINS=http://localhost:5173
+npm run dev:web             # web demo (Vite), same as cd web && npm run dev; the server needs CORS_ORIGINS=http://localhost:5173
 cd web && npm run check     # web demo: typecheck + tests + build (separate package)
 ```
 
