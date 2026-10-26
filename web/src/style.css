@@ -1,0 +1,430 @@
+/* One loud element: SMPTE color bars (the video test pattern) on the header
+   strip, the progress fill and the size bars. Everything else stays quiet. */
+:root {
+  --bg: #eef0f2;
+  --surface: #ffffff;
+  --fg: #16181d;
+  --muted: #5b616c;
+  --line: #d3d7dd;
+  --focus: #1f5fd1;
+  --danger: #a3261b;
+  --smpte: linear-gradient(90deg, #c0c0c0 0 14.28%, #c0c000 0 28.57%, #00c0c0 0 42.85%, #00c000 0 57.14%, #c000c0 0 71.42%, #c00000 0 85.71%, #0000c0 0);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171b;
+    --surface: #1d2025;
+    --fg: #e7e9ec;
+    --muted: #9aa1ac;
+    --line: #30343b;
+    --focus: #7aa7ff;
+    --danger: #ff8a7a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+h2 {
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+.button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Header */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: end;
+  justify-content: space-between;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 16px 1.25rem;
+}
+
+.top h1 {
+  font-size: clamp(2.25rem, 7vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.pitch {
+  max-width: 34rem;
+  margin-top: 0.4rem;
+  color: var(--muted);
+}
+
+.switch {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  cursor: pointer;
+}
+
+.switch input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--fg);
+}
+
+.bars {
+  height: 8px;
+  background: var(--smpte);
+}
+
+/* Layout: the flow alone, or flow + log in expert mode on wide screens */
+.layout {
+  display: grid;
+  gap: 2rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem 16px 4rem;
+}
+
+.flow {
+  display: grid;
+  gap: 1.75rem;
+  max-width: 38rem;
+  min-width: 0;
+}
+
+@media (min-width: 800px) {
+  body.expert .layout {
+    grid-template-columns: minmax(0, 38rem) minmax(0, 1fr);
+  }
+}
+
+.step {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.step[hidden],
+[hidden] {
+  display: none;
+}
+
+legend {
+  padding: 0;
+  margin-bottom: 0.6rem;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.error {
+  color: var(--danger);
+}
+
+/* Drop zone: a real file input inside, so keyboard and screen readers work */
+.drop {
+  position: relative;
+  display: block;
+  padding: 2rem 1rem;
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.drop:hover,
+.drop.over {
+  border-color: var(--fg);
+}
+
+.drop:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.drop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.drop:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Presets: one ruled list of radio rows */
+.presets {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.preset {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.75rem;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+}
+
+.preset + .preset {
+  border-top: 1px solid var(--line);
+}
+
+.preset input {
+  grid-row: span 2;
+  margin: 0.3rem 0 0;
+  accent-color: var(--fg);
+}
+
+.preset:has(input:checked) {
+  box-shadow: inset 4px 0 0 var(--fg);
+}
+
+.preset:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.preset-name {
+  font-weight: 600;
+}
+
+.preset-desc {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.presets .note {
+  padding: 0.8rem 1rem;
+}
+
+/* Buttons */
+button,
+.button {
+  justify-self: start;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--fg);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--fg);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Progress */
+.phase {
+  font-weight: 600;
+}
+
+progress {
+  width: 100%;
+  height: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--line);
+  overflow: hidden;
+  appearance: none;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--line);
+}
+
+progress::-webkit-progress-value {
+  background: var(--smpte);
+  background-size: 100% 100%;
+}
+
+progress::-moz-progress-bar {
+  background: var(--smpte);
+}
+
+/* Result */
+.summary {
+  font-size: clamp(1.4rem, 4vw, 1.9rem);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.sizes {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.75rem;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.size {
+  height: 12px;
+  border-radius: 6px;
+}
+
+.size.before {
+  background: var(--line);
+}
+
+.size.after {
+  background: var(--smpte);
+}
+
+video {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 8px;
+  background: #000;
+}
+
+/* Expert log */
+.log-panel {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.log-panel[hidden] {
+  display: none;
+}
+
+.url-form {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.url-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.url-row input {
+  flex: 1 1 14rem;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.url-row input:invalid {
+  border-color: var(--danger);
+}
+
+.url-row button {
+  padding: 0.5rem 0.8rem;
+}
+
+.log {
+  max-height: 70vh;
+  margin: 0;
+  padding: 0.5rem 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  list-style: none;
+  font: 0.8rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.log:empty::before {
+  content: "Requests and job events show up here.";
+  display: block;
+  padding: 0 0.75rem;
+  color: var(--muted);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.log li {
+  padding: 0.15rem 0.75rem;
+}
+
+.log summary {
+  cursor: pointer;
+}
+
+.log time {
+  margin-right: 0.6em;
+  color: var(--muted);
+}
+
+.log pre {
+  margin: 0.3rem 0 0.4rem;
+  padding: 0.5rem;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .drop {
+    transition: border-color 0.15s;
+  }
+}

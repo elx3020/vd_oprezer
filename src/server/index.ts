@@ -31,6 +31,8 @@ export interface ServerConfig extends EngineConfig {
   signal?: AbortSignal;
   /** Fastify's logger option. Default: false. */
   logger?: FastifyServerOptions["logger"];
+  /** Origins allowed to call the API from a browser; "*" allows any. Default: none, no CORS headers. */
+  corsOrigins?: string[];
 }
 
 export function createApp(config: ServerConfig = {}): FastifyInstance {
@@ -56,6 +58,26 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     await jobs.settled();
     await rm(root, { recursive: true, force: true });
   });
+
+  const { corsOrigins = [] } = config;
+  if (corsOrigins.length) {
+    const any = corsOrigins.includes("*");
+    app.addHook("onRequest", (req, reply, done) => {
+      const origin = req.headers.origin;
+      if (!origin || !(any || corsOrigins.includes(origin))) return done();
+      // On reply.raw, not reply.header(): the SSE route hijacks the reply and writes its own head.
+      const res = reply.raw;
+      res.setHeader("access-control-allow-origin", any ? "*" : origin);
+      if (!any) res.setHeader("vary", "Origin");
+      if (req.method === "OPTIONS") {
+        res.setHeader("access-control-allow-methods", "GET, POST, DELETE");
+        res.setHeader("access-control-max-age", "86400");
+      }
+      done();
+    });
+    // Preflights (DELETE, and POST with upload progress); Fastify has no OPTIONS routes otherwise.
+    app.options("*", (_req, reply) => reply.status(204).send());
+  }
 
   void app.register(multipart, {
     // One file plus a few short option fields; anything bigger is not a real client.

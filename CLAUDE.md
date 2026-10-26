@@ -33,6 +33,8 @@ npm run build               # tsc → dist/
 npm run bundle              # esbuild → dist-bundle/ (what the Docker image runs)
 docker build -t vd-oprezer .          # runtime image
 docker build --target test .          # npm run check on Linux with the image's FFmpeg
+cd web && npm run dev       # web demo (Vite); the server needs CORS_ORIGINS=http://localhost:5173
+cd web && npm run check     # web demo: typecheck + tests + build (separate package)
 ```
 
 ## Rules the tooling enforces (don't work around them)
@@ -49,6 +51,10 @@ docker build --target test .          # npm run check on Linux with the image's 
 - Builtins use the `node:` prefix. Relative imports use `.js` extensions.
 - Tests sit next to the code (`src/core/progress.test.ts`) so they move with
   their module.
+- `web/` (the demo page) is its own package: it never imports `src/`, has no
+  runtime dependencies, and talks to backends only through an adapter
+  (`web/src/adapters/`). A change there must pass `npm run check` in `web/`.
+  (Convention for now: nothing lints `web/` imports yet.)
 
 ## Gotchas already learned
 

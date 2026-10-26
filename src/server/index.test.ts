@@ -466,3 +466,59 @@ describe("GET /jobs/:id/events", () => {
     assert.equal((await stream.next()).done, true);
   });
 });
+
+describe("CORS", () => {
+  const origin = "https://demo.example";
+  const acao = (res: Response) => res.headers.get("access-control-allow-origin");
+
+  it("adds Access-Control-Allow-Origin for listed origins only", async () => {
+    await start({ corsOrigins: [origin] });
+    const ok = await fetch(`${base}/presets`, { headers: { origin } });
+    assert.equal(acao(ok), origin);
+    assert.match(ok.headers.get("vary") ?? "", /origin/i);
+    assert.equal(acao(await fetch(`${base}/presets`, { headers: { origin: "https://other.example" } })), null);
+  });
+
+  it("allows any origin with '*'", async () => {
+    await start({ corsOrigins: ["*"] });
+    assert.equal(acao(await fetch(`${base}/presets`, { headers: { origin } })), "*");
+  });
+
+  it("sends no CORS headers and has no OPTIONS routes by default", async () => {
+    await start();
+    assert.equal(acao(await fetch(`${base}/presets`, { headers: { origin } })), null);
+    const preflight = await fetch(`${base}/jobs`, { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST" } });
+    assert.equal(preflight.status, 404);
+  });
+
+  it("answers preflights for POST /jobs and DELETE /jobs/:id", async () => {
+    await start({ corsOrigins: [origin] });
+    for (const [method, url] of [["POST", `${base}/jobs`], ["DELETE", `${base}/jobs/some-id`]] as const) {
+      const res = await fetch(url, { method: "OPTIONS", headers: { origin, "access-control-request-method": method } });
+      assert.equal(res.status, 204);
+      assert.equal(acao(res), origin);
+      assert.equal(res.headers.get("access-control-allow-methods"), "GET, POST, DELETE");
+      assert.equal(res.headers.get("access-control-max-age"), "86400");
+    }
+  });
+
+  it("keeps the header on the SSE stream (hijacked reply) and on 413/503 errors", async () => {
+    await start({ corsOrigins: [origin] });
+    const { id } = (await (await submit(form({}))).json()) as Job;
+    const stream = await fetch(`${base}/jobs/${id}/events`, { headers: { origin } });
+    assert.equal(acao(stream), origin);
+    await stream.body?.cancel();
+    await close();
+
+    await start({ corsOrigins: [origin], maxUploadBytes: 2 });
+    const tooBig = await fetch(`${base}/jobs`, { method: "POST", body: form({}), headers: { origin } });
+    assert.equal(tooBig.status, 413);
+    assert.equal(acao(tooBig), origin);
+    await close();
+
+    await start({ corsOrigins: [origin], maxQueued: 0 });
+    const full = await fetch(`${base}/jobs`, { method: "POST", body: form({}), headers: { origin } });
+    assert.equal(full.status, 503);
+    assert.equal(acao(full), origin);
+  });
+});
