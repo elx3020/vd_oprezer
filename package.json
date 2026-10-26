@@ -1,6 +1,6 @@
 {
   "name": "vd_oprezer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Video optimizer & resizer: a CLI and HTTP service around FFmpeg, with presets for web, YouTube, Instagram and more.",
   "type": "module",
