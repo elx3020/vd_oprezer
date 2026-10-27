@@ -260,6 +260,36 @@ async function waitForStatus(id: string, status: Job["status"]) {
   return getJob(id);
 }
 
+describe("POST /probe", () => {
+  const probe = (body: FormData) => fetch(`${base}/probe`, { method: "POST", body });
+
+  it("answers what a video is, without encoding it or keeping it", async () => {
+    const runner = await start();
+    const res = await probe(form({}));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { formatName: "mov,mp4", width: 1920, height: 1080, durationMs: 10000 });
+    assert.ok(runner.mock.calls.every((call) => call.arguments[0] === "ffprobe"));
+    await workDirEmpty();
+  });
+
+  it("answers 422 NOT_A_VIDEO for a still image, which ffprobe reads as a one-frame video", async () => {
+    const png = JSON.stringify({ format: { format_name: "png_pipe" }, streams: [{ codec_type: "video", codec_name: "png", width: 10, height: 10 }] });
+    await start({ runner: () => Promise.resolve(result(0, png)) });
+    const res = await probe(form({}, { name: "x.mp4", content: "png" }));
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: "NOT_A_VIDEO", message: "The upload is not a video." });
+    await workDirEmpty();
+  });
+
+  it("answers 422 PROBE_FAILED for what ffprobe can't read", async () => {
+    await start({ runner: () => Promise.resolve(result(1, "", "Invalid data found when processing input")) });
+    const res = await probe(form({}));
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: "PROBE_FAILED", message: "The upload is not a readable video file." });
+    await workDirEmpty();
+  });
+});
+
 describe("jobs", () => {
   it("runs a job: 202 + id, poll until done, download, delete", async () => {
     await start();

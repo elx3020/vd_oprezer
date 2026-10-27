@@ -115,7 +115,12 @@ gets an AbortSignal combining server shutdown with client disconnect
 (`/convert`) or DELETE (jobs). `/convert` reports the output's size in
 `X-Output-Width` / `X-Output-Height` / `X-Output-Duration-Ms`, and a done
 job carries `width` / `height` / `durationMs`, both from core's
-`outputDimensions` (the size `buildArgs` scales to; no second probe). 422/5xx messages are fixed texts, so FFmpeg
+`outputDimensions` (the size `buildArgs` scales to; no second probe).
+`POST /probe` (multipart `file`) answers whether the upload is a video
+before a caller commits to it: 200 `{ formatName, width, height, durationMs }`,
+or 422 `NOT_A_VIDEO` (a still image reads as a one-frame video stream, so
+image formats are refused by name) / `PROBE_FAILED`. It runs ffprobe only,
+outside the encode queue, and keeps nothing. 422/5xx messages are fixed texts, so FFmpeg
 output and paths never leak. `main.ts` reads env (`PORT`, `HOST`,
 `MAX_UPLOAD_MB`, `WORK_DIR`, `CONCURRENCY`, `MAX_QUEUED`, `JOB_TTL_MIN`,
 `CORS_ORIGINS`, `AUTH_KEY`, `FFMPEG_PATH`, `FFPROBE_PATH`) and handles

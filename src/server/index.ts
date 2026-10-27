@@ -191,6 +191,24 @@ export function createApp(config: ServerConfig = {}): FastifyInstance {
     }
   });
 
+  // Is the upload a video? Answers before a caller commits to it (e.g. stores a
+  // placeholder): 200 with what ffprobe saw, or 422. Not queued: no encode runs.
+  app.post("/probe", async (req) => {
+    const dir = await mkdtemp(path.join(root, "convert", "p-"));
+    try {
+      const input = path.join(dir, "upload");
+      await receive(req, input);
+      const info = await engine.probe(input, { signal });
+      // A still image reads as a one-frame video stream; its format gives it away.
+      if (!info.video || /(^|,)(image2|gif|\w+_pipe)(,|$)/.test(info.formatName)) {
+        throw new HttpError(422, "NOT_A_VIDEO", "The upload is not a video.");
+      }
+      return { formatName: info.formatName, width: info.video.width, height: info.video.height, durationMs: info.durationMs };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   // Asynchronous: upload, get a job id back at once, poll GET /jobs/:id, download when done.
   app.post("/jobs", async (req, reply) => {
     assertRoom();
