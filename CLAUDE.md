@@ -8,6 +8,7 @@ TypeScript, Node 24, ESM, single npm package. Developed on Windows
 Read before changing anything:
 - `docs/ARCHITECTURE.md`: module boundaries, guardrails, engine behaviour
 - `docs/DECISIONS.md`: what is decided, what is next, and the plan for each step
+- `docs/DIAGRAMS.md`: UML diagrams (components, classes, sequences, states, deployment) in Mermaid
 
 ## How we work
 
@@ -19,6 +20,11 @@ Read before changing anything:
 - **Done means `npm run check` passes** (typecheck + lint + boundaries + deps + tests).
 - After implementing, update `docs/DECISIONS.md` (status + short rationale)
   and `docs/ARCHITECTURE.md` if behaviour changed.
+- **Always update `docs/DIAGRAMS.md` in the same change** when a code change
+  affects what a diagram shows (modules, files, imports, exported types or
+  functions, routes, job/UI states, flows, Docker stages, `web/` included).
+  Mermaid treats `;` in sequence messages as a line break and fails on class
+  members that start with `(` and on `:` in relation labels.
 - Don't commit unless asked.
 
 ## Commands
